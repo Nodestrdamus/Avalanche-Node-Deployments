@@ -5,6 +5,7 @@ set -e
 VERSION="1.0.0"
 GOVERSION="1.21.7"
 AVALANCHE_REPO="https://github.com/ava-labs/avalanchego.git"
+GOPATH="$HOME/go"
 
 # Colors for output
 RED='\033[0;31m'
@@ -13,14 +14,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration variables
-NODE_TYPE=""
 NETWORK_ID=""
-IS_STATIC_IP=false
-PUBLIC_IP=""
-RPC_PUBLIC=false
-STATE_SYNC_ENABLED=false
 HOME_DIR="$HOME/.avalanchego"
-UPGRADE_MODE=false
 
 print_banner() {
     echo "=================================================="
@@ -38,72 +33,6 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}Error: $1${NC}"
-}
-
-get_latest_avalanchego_version() {
-    print_step "Checking latest AvalancheGo version from official repository..."
-    LATEST_VERSION=$(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | grep -oP '"tag_name": "\K(.*)(?=")')
-    if [ -z "$LATEST_VERSION" ]; then
-        print_error "Failed to fetch latest AvalancheGo version from Avalanche repository"
-        exit 1
-    fi
-    AVALANCHEGO_VERSION=${LATEST_VERSION#v}
-    echo "Latest AvalancheGo version from Avalanche: $AVALANCHEGO_VERSION"
-}
-
-check_for_updates() {
-    if [ -d "$HOME/avalanchego" ]; then
-        cd "$HOME/avalanchego"
-        # Ensure we're tracking the official repository
-        git remote set-url origin $AVALANCHE_REPO 2>/dev/null || git remote add origin $AVALANCHE_REPO
-        git fetch --all --tags
-        CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
-        get_latest_avalanchego_version
-        if [ "$CURRENT_VERSION" != "v$AVALANCHEGO_VERSION" ]; then
-            print_warning "New version available from Avalanche: v$AVALANCHEGO_VERSION (current: $CURRENT_VERSION)"
-            read -p "Would you like to upgrade? [y/n]: " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                UPGRADE_MODE=true
-                return 0
-            fi
-        else
-            echo "AvalancheGo is up to date with official Avalanche release (v$AVALANCHEGO_VERSION)"
-        fi
-    fi
-    return 1
-}
-
-upgrade_avalanchego() {
-    print_step "Upgrading AvalancheGo to official version v$AVALANCHEGO_VERSION..."
-    
-    # Stop the service
-    sudo systemctl stop avalanchego
-    
-    # Backup current version
-    BACKUP_DIR="$HOME_DIR/backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
-    cp -r "$HOME_DIR/configs" "$BACKUP_DIR/"
-    if [ -d "$HOME_DIR/staking" ]; then
-        cp -r "$HOME_DIR/staking" "$BACKUP_DIR/"
-    fi
-    
-    # Update the code from official repository
-    cd "$HOME/avalanchego"
-    git fetch --all --tags
-    git checkout "v$AVALANCHEGO_VERSION"
-    
-    # Rebuild using official build script
-    ./scripts/build.sh
-    
-    # Update systemd service if needed
-    setup_systemd_service
-    
-    # Restart the service
-    sudo systemctl start avalanchego
-    
-    print_step "Upgrade to official Avalanche version completed successfully!"
-    echo "Backup of previous configuration saved to: $BACKUP_DIR"
 }
 
 check_requirements() {
@@ -152,7 +81,7 @@ check_requirements() {
         echo "✓ RAM check passed (detected: ${TOTAL_RAM}GB)"
     fi
 
-    # Check disk space
+    # Check disk space and type
     DISK_SPACE=$(df -BG / | awk '/^\/dev/{print $4}' | tr -d 'G')
     if [ "$DISK_SPACE" -lt 1000 ]; then
         requirements_met=false
@@ -166,6 +95,13 @@ check_requirements() {
         echo "✓ Disk space check passed (detected: ${DISK_SPACE}GB free)"
     fi
 
+    # Check if using SSD
+    ROTATIONAL=$(lsblk -d -o name,rota | grep -v "loop" | grep "1")
+    if [ ! -z "$ROTATIONAL" ]; then
+        print_error "HDD detected. Avalanche requires SSD storage for optimal performance."
+        exit 1
+    fi
+
     if [ "$requirements_met" = true ]; then
         print_step "All system requirements met! Proceeding with installation..."
     fi
@@ -174,7 +110,10 @@ check_requirements() {
 install_dependencies() {
     print_step "Installing dependencies..."
     
+    # Update package list
     sudo apt-get update
+    
+    # Install required packages
     sudo apt-get install -y \
         git \
         curl \
@@ -187,9 +126,10 @@ install_dependencies() {
         tar \
         wget \
         jq \
+        ufw \
         lsb-release
 
-    # Install Go
+    # Install Go if not installed
     if ! command -v go &> /dev/null; then
         print_step "Installing Go ${GOVERSION}..."
         wget "https://golang.org/dl/go${GOVERSION}.linux-amd64.tar.gz"
@@ -197,152 +137,41 @@ install_dependencies() {
         sudo tar -C /usr/local -xzf "go${GOVERSION}.linux-amd64.tar.gz"
         rm "go${GOVERSION}.linux-amd64.tar.gz"
         
+        # Set up Go environment
         echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
         echo 'export GOPATH=$HOME/go' >> ~/.profile
         echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.profile
         source ~/.profile
     fi
-
-    # Verify Go installation
-    if ! command -v go &> /dev/null; then
-        print_error "Failed to install Go"
-        exit 1
-    fi
-}
-
-get_node_type() {
-    print_step "Select node type:"
-    echo "1) Validator Node (for staking)"
-    echo "2) Historical Node (full archive)"
-    echo "3) API Node (RPC endpoint)"
-    
-    while true; do
-        read -p "Enter your choice [1-3]: " choice
-        case $choice in
-            1) NODE_TYPE="validator"; break;;
-            2) NODE_TYPE="historical"; break;;
-            3) NODE_TYPE="api"; break;;
-            *) echo "Invalid choice. Please enter 1, 2, or 3.";;
-        esac
-    done
-}
-
-get_network() {
-    print_step "Select network:"
-    echo "1) Mainnet"
-    echo "2) Fuji (Testnet)"
-    echo "3) Local"
-    
-    while true; do
-        read -p "Enter your choice [1-3]: " choice
-        case $choice in
-            1) NETWORK_ID="mainnet"; break;;
-            2) NETWORK_ID="fuji"; break;;
-            3) NETWORK_ID="local"; break;;
-            *) echo "Invalid choice. Please enter 1, 2, or 3.";;
-        esac
-    done
-}
-
-get_ip_config() {
-    print_step "Network configuration:"
-    echo "1) Residential network (dynamic IP)"
-    echo "2) Cloud provider (static IP)"
-    
-    while true; do
-        read -p "Enter your connection type [1,2]: " choice
-        case $choice in
-            1) IS_STATIC_IP=false; break;;
-            2) IS_STATIC_IP=true; break;;
-            *) echo "Invalid choice. Please enter 1 or 2.";;
-        esac
-    done
-
-    if [ "$IS_STATIC_IP" = true ]; then
-        PUBLIC_IP=$(curl -s https://api.ipify.org)
-        echo "Detected public IP: $PUBLIC_IP"
-        read -p "Is this correct? [y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            read -p "Enter your public IP: " PUBLIC_IP
-        fi
-    fi
-}
-
-get_rpc_config() {
-    if [ "$NODE_TYPE" == "validator" ]; then
-        # Automatically set to private for validator nodes
-        RPC_PUBLIC=false
-        echo "RPC access automatically set to private for validator node"
-    else
-        print_step "RPC configuration:"
-        read -p "Should RPC port be public (public) or private (private)? [public/private]: " rpc_choice
-        if [[ $rpc_choice == "public" ]]; then
-            print_warning "Making RPC port public without proper firewall rules can expose your node to DDoS attacks!"
-            read -p "Are you sure you want to continue? [y/n]: " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                RPC_PUBLIC=true
-            else
-                RPC_PUBLIC=false
-            fi
-        else
-            RPC_PUBLIC=false
-        fi
-    fi
-}
-
-get_state_sync() {
-    if [ "$NODE_TYPE" == "validator" ]; then
-        # Automatically enable state sync for validator nodes
-        STATE_SYNC_ENABLED=true
-        echo "State sync bootstrapping automatically enabled for validator node"
-    elif [ "$NODE_TYPE" != "historical" ]; then
-        print_step "State sync configuration:"
-        while true; do
-            read -p "Do you want state sync bootstrapping to be turned on or off? [on/off]: " state_sync
-            case $state_sync in
-                on|ON)  STATE_SYNC_ENABLED=true; break;;
-                off|OFF) STATE_SYNC_ENABLED=false; break;;
-                *) echo "Please enter 'on' or 'off'";;
-            esac
-        done
-    else
-        STATE_SYNC_ENABLED=false
-    fi
 }
 
 setup_avalanchego() {
-    print_step "Setting up AvalancheGo from official Avalanche repository..."
+    print_step "Setting up AvalancheGo from source..."
     
-    # Create directories
+    # Create GOPATH directory structure
+    mkdir -p $GOPATH/src/github.com/ava-labs
+    cd $GOPATH/src/github.com/ava-labs
+    
+    # Clone AvalancheGo
+    if [ -d "avalanchego" ]; then
+        print_warning "AvalancheGo directory already exists. Removing..."
+        rm -rf avalanchego
+    fi
+    git clone $AVALANCHE_REPO
+    cd avalanchego
+    
+    # Get latest version
+    get_latest_avalanchego_version
+    git checkout "v$AVALANCHEGO_VERSION"
+    
+    # Build AvalancheGo
+    ./scripts/build.sh
+
+    # Create required directories
     mkdir -p "$HOME_DIR"/{db,configs,staking}
     chmod 700 "$HOME_DIR/staking"
 
-    if [ "$UPGRADE_MODE" = false ]; then
-        # Fresh installation from official repository
-        cd "$HOME"
-        if [ -d "avalanchego" ]; then
-            print_warning "AvalancheGo directory already exists. Removing..."
-            rm -rf avalanchego
-        fi
-        git clone $AVALANCHE_REPO
-        cd avalanchego
-    fi
-    
-    # Get latest version from Avalanche
-    get_latest_avalanchego_version
-    
-    # Checkout and build official version
-    git checkout "v$AVALANCHEGO_VERSION"
-    ./scripts/build.sh
-
-    # For validator nodes, generate staking keys before config
-    if [ "$NODE_TYPE" == "validator" ]; then
-        generate_staking_keys
-    fi
-
-    # Generate main config
+    # Generate config
     generate_config
 
     # Setup systemd service
@@ -354,7 +183,7 @@ generate_config() {
     
     CONFIG_FILE="$HOME_DIR/configs/node.json"
     
-    # Base configuration
+    # Base configuration following Avalanche docs
     cat > "$CONFIG_FILE" << EOL
 {
     "network-id": "${NETWORK_ID}",
@@ -363,54 +192,21 @@ generate_config() {
     "staking-port": 9651,
     "db-dir": "${HOME_DIR}/db",
     "log-level": "info",
-    "public-ip": "${PUBLIC_IP}",
-EOL
-
-    # Node-specific configuration
-    case $NODE_TYPE in
-        "validator")
-            cat >> "$CONFIG_FILE" << EOL
-    "staking-enabled": true,
-    "state-sync-enabled": ${STATE_SYNC_ENABLED},
+    "log-display-level": "info",
+    "log-dir": "${HOME_DIR}/logs",
     "api-admin-enabled": false,
     "api-ipcs-enabled": false,
+    "index-enabled": false,
     "api-keystore-enabled": false,
-    "api-metrics-enabled": true
-EOL
-            ;;
-        "historical")
-            cat >> "$CONFIG_FILE" << EOL
-    "index-enabled": true,
-    "api-admin-enabled": true,
-    "api-ipcs-enabled": true,
-    "pruning-enabled": false,
-    "c-chain-config": {
-        "coreth-config": {
-            "pruning-enabled": false,
-            "allow-missing-tries": false,
-            "populate-missing-tries": true,
-            "snapshot-async": true,
-            "snapshot-verification-enabled": false
-        }
-    }
-EOL
-            ;;
-        "api")
-            cat >> "$CONFIG_FILE" << EOL
-    "state-sync-enabled": ${STATE_SYNC_ENABLED},
-    "index-enabled": true,
-    "api-admin-enabled": true,
-    "api-info-enabled": true,
-    "api-keystore-enabled": true,
     "api-metrics-enabled": true,
-    "api-health-enabled": true,
-    "api-ipcs-enabled": true
+    "bootstrap-retry-enabled": true,
+    "bootstrap-retry-warm-up": "5m",
+    "health-check-frequency": "2m",
+    "health-check-averager-halflife": "10s",
+    "network-minimum-timeout": "5s",
+    "network-initial-timeout": "5s"
+}
 EOL
-            ;;
-    esac
-
-    # Close JSON object
-    echo "}" >> "$CONFIG_FILE"
 }
 
 setup_systemd_service() {
@@ -418,17 +214,18 @@ setup_systemd_service() {
     
     sudo tee /etc/systemd/system/avalanchego.service > /dev/null << EOL
 [Unit]
-Description=AvalancheGo ${NODE_TYPE^} Node
+Description=AvalancheGo Node
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=$USER
-ExecStart=$HOME/avalanchego/build/avalanchego --config-file=${HOME_DIR}/configs/node.json
+ExecStart=$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego --config-file=${HOME_DIR}/configs/node.json
 Restart=always
 RestartSec=1
-TimeoutStopSec=300
 LimitNOFILE=32768
+TimeoutStopSec=300
 
 [Install]
 WantedBy=multi-user.target
@@ -438,209 +235,96 @@ EOL
     sudo systemctl enable avalanchego
 }
 
-generate_staking_keys() {
-    print_step "Generating staking keys..."
-    
-    # Create staking directory with proper permissions
-    mkdir -p "${HOME_DIR}/staking"
-    chmod 700 "${HOME_DIR}/staking"
-    
-    # Generate temporary config for key generation
-    local TEMP_CONFIG="${HOME_DIR}/configs/temp-config.json"
-    mkdir -p "${HOME_DIR}/configs"
-    cat > "$TEMP_CONFIG" << EOL
-{
-    "network-id": "${NETWORK_ID}",
-    "staking-tls-cert-file": "${HOME_DIR}/staking/staker.crt",
-    "staking-tls-key-file": "${HOME_DIR}/staking/staker.key",
-    "http-host": "127.0.0.1",
-    "http-port": 9650,
-    "staking-port": 9651,
-    "log-level": "OFF",
-    "db-dir": "${HOME_DIR}/db-temp"
-}
-EOL
-
-    if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
-        print_step "Starting temporary node to generate keys..."
-        cd "$HOME/avalanchego"
-        
-        # Start node with temporary config
-        ./build/avalanchego --config-file="$TEMP_CONFIG" &
-        
-        # Store the PID
-        local NODE_PID=$!
-        
-        # Wait for key generation
-        local ATTEMPTS=0
-        local MAX_ATTEMPTS=30
-        while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-            if [ -f "${HOME_DIR}/staking/staker.key" ] && [ -f "${HOME_DIR}/staking/staker.crt" ]; then
-                echo "✓ Staking keys generated"
-                break
-            fi
-            echo "Waiting for key generation... ($(($ATTEMPTS + 1))/$MAX_ATTEMPTS)"
-            sleep 2
-            ATTEMPTS=$((ATTEMPTS + 1))
-        done
-        
-        # Kill the temporary node
-        if ps -p $NODE_PID > /dev/null; then
-            kill $NODE_PID
-            wait $NODE_PID 2>/dev/null || true
-        fi
-        
-        # Clean up temporary files
-        rm -f "$TEMP_CONFIG"
-        rm -rf "${HOME_DIR}/db-temp"
-        
-        # Verify keys were generated
-        if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
-            print_error "Failed to generate staking keys after $MAX_ATTEMPTS attempts"
-            exit 1
-        fi
-        
-        # Set correct permissions
-        chmod 600 "${HOME_DIR}/staking/staker.key"
-        chmod 644 "${HOME_DIR}/staking/staker.crt"
-        
-        echo "✓ Staking keys generated successfully"
-    else
-        echo "✓ Staking keys already exist"
-    fi
-}
-
 configure_firewall() {
     print_step "Configuring firewall..."
     
-    sudo apt-get install -y ufw
-    sudo ufw allow 22/tcp
-    sudo ufw allow 9651/tcp
-    
-    if [ "$RPC_PUBLIC" = true ]; then
-        sudo ufw allow 9650/tcp
-    fi
-    
+    sudo ufw allow 22/tcp comment 'SSH'
+    sudo ufw allow 9651/tcp comment 'Avalanche P2P'
+    sudo ufw allow 9650/tcp comment 'Avalanche API'
     sudo ufw --force enable
+}
+
+check_bootstrap_status() {
+    local chain=$1
+    local result=$(curl -s -X POST --data "{
+        \"jsonrpc\":\"2.0\",
+        \"id\":1,
+        \"method\":\"info.isBootstrapped\",
+        \"params\":{
+            \"chain\":\"$chain\"
+        }
+    }" -H 'content-type:application/json;' 127.0.0.1:9650/ext/info)
+    
+    if [[ $result == *"true"* ]]; then
+        echo "✓ $chain-Chain is bootstrapped"
+        return 0
+    else
+        echo "⧖ $chain-Chain is still bootstrapping"
+        return 1
+    fi
 }
 
 start_node() {
     print_step "Starting AvalancheGo node..."
     sudo systemctl start avalanchego
+    
+    # Wait for node to start
+    sleep 5
+    
+    # Check if node is running
+    if systemctl is-active --quiet avalanchego; then
+        echo "✓ Node started successfully"
+        print_step "Checking initial bootstrap status..."
+        check_bootstrap_status "P"
+        check_bootstrap_status "X"
+        check_bootstrap_status "C"
+        echo "Note: Full bootstrapping may take several days"
+    else
+        print_error "Failed to start node. Check logs with: sudo journalctl -u avalanchego -f"
+        exit 1
+    fi
 }
 
-print_completion() {
-    print_step "Installation completed!"
+main() {
+    print_banner
+    
+    check_requirements
+    install_dependencies
+    
+    # Set up network ID
+    print_step "Select network:"
+    echo "1) Mainnet"
+    echo "2) Fuji (Testnet)"
+    
+    while true; do
+        read -p "Enter your choice [1-2]: " choice
+        case $choice in
+            1) NETWORK_ID="mainnet"; break;;
+            2) NETWORK_ID="fuji"; break;;
+            *) echo "Invalid choice. Please enter 1 or 2.";;
+        esac
+    done
+    
+    setup_avalanchego
+    configure_firewall
+    start_node
+    
+    print_step "Installation completed successfully!"
     echo "=================================================="
-    echo "Node type: ${NODE_TYPE^}"
     echo "Network: $NETWORK_ID"
-    if [ "$IS_STATIC_IP" = true ]; then
-        echo "Public IP: $PUBLIC_IP"
-    fi
     echo "=================================================="
     echo "Useful commands:"
     echo "- Check node status: sudo systemctl status avalanchego"
     echo "- View logs: sudo journalctl -u avalanchego -f"
     echo "- Stop node: sudo systemctl stop avalanchego"
     echo "- Start node: sudo systemctl start avalanchego"
-    if [ "$NODE_TYPE" == "validator" ]; then
-        echo -e "\nIMPORTANT: Backup your staking keys from ${HOME_DIR}/staking/"
-    fi
+    echo "- Check bootstrap status: curl -X POST --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"info.isBootstrapped\",\"params\":{\"chain\":\"X\"}}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info"
+    echo "=================================================="
+    echo "RPC Endpoints when bootstrapped:"
+    echo "- P-Chain: localhost:9650/ext/bc/P"
+    echo "- X-Chain: localhost:9650/ext/bc/X"
+    echo "- C-Chain: localhost:9650/ext/bc/C/rpc"
     echo "=================================================="
 }
 
-restore_previous_version() {
-    print_step "Restoring previous version..."
-    
-    # List available backups
-    local BACKUP_DIR="$HOME_DIR"
-    local backups=($(ls -d ${BACKUP_DIR}/backup_* 2>/dev/null))
-    
-    if [ ${#backups[@]} -eq 0 ]; then
-        print_error "No backup versions found"
-        exit 1
-    fi
-    
-    echo "Available backups:"
-    for i in "${!backups[@]}"; do
-        local backup_date=$(basename "${backups[$i]}" | cut -d'_' -f2-)
-        echo "$((i+1))) ${backup_date}"
-    done
-    
-    # Get user selection
-    local selection
-    while true; do
-        read -p "Select backup to restore [1-${#backups[@]}] or 'q' to quit: " selection
-        if [[ "$selection" == "q" ]]; then
-            exit 0
-        elif [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#backups[@]}" ]; then
-            break
-        fi
-        echo "Invalid selection. Please try again."
-    done
-    
-    local SELECTED_BACKUP="${backups[$((selection-1))]}"
-    
-    # Stop the service
-    print_step "Stopping AvalancheGo service..."
-    sudo systemctl stop avalanchego
-    
-    # Backup current version before restoring
-    local CURRENT_BACKUP="$HOME_DIR/backup_$(date +%Y%m%d_%H%M%S)_pre_restore"
-    print_step "Creating backup of current version at: $CURRENT_BACKUP"
-    mkdir -p "$CURRENT_BACKUP"
-    cp -r "$HOME_DIR/configs" "$CURRENT_BACKUP/"
-    if [ -d "$HOME_DIR/staking" ]; then
-        cp -r "$HOME_DIR/staking" "$CURRENT_BACKUP/"
-    fi
-    
-    # Restore selected backup
-    print_step "Restoring from backup: $SELECTED_BACKUP"
-    cp -r "$SELECTED_BACKUP/configs/"* "$HOME_DIR/configs/"
-    if [ -d "$SELECTED_BACKUP/staking" ]; then
-        cp -r "$SELECTED_BACKUP/staking/"* "$HOME_DIR/staking/"
-    fi
-    
-    # Set correct permissions
-    chmod 600 "$HOME_DIR/staking/staker.key"
-    chmod 644 "$HOME_DIR/staking/staker.crt"
-    
-    # Start the service
-    print_step "Starting AvalancheGo service..."
-    sudo systemctl start avalanchego
-    
-    print_step "Restore completed successfully!"
-    echo "Previous version backed up to: $CURRENT_BACKUP"
-    echo "Restored from: $SELECTED_BACKUP"
-}
-
-main() {
-    print_banner
-    
-    # Check if restore option is requested
-    if [ "$1" == "--restore" ]; then
-        restore_previous_version
-        exit 0
-    fi
-    
-    # Check for existing installation and updates
-    if check_for_updates; then
-        upgrade_avalanchego
-        exit 0
-    fi
-    
-    check_requirements
-    install_dependencies
-    get_node_type
-    get_network
-    get_ip_config
-    get_rpc_config
-    get_state_sync
-    setup_avalanchego
-    configure_firewall
-    start_node
-    print_completion
-}
-
-# Pass command line arguments to main
 main "$@" 
