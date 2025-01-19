@@ -1,216 +1,122 @@
 # Avalanche Node Deployment Script
 
-A comprehensive installation and management script for deploying various types of Avalanche nodes. This script simplifies the process of setting up and managing Validator, Historical, and API nodes on the Avalanche network.
+© 2024 Rise & Shine Management. All Rights Reserved.
+
+A professional-grade installation script for deploying and managing Avalanche nodes on Ubuntu systems. This script streamlines the process of setting up validator, historical, or API nodes on both mainnet and testnet environments.
 
 ## Features
 
-- **Multiple Node Types**:
-  - Validator Node (with automatic state sync and private RPC)
-  - Historical Node (with full indexing)
-  - API Node (with public endpoints)
-  - Manual Configuration Option
+### Node Types
+- **Validator Node**: Secure configuration optimized for network validation
+- **Historical Node**: Full indexing enabled for historical data access
+- **API Node**: Public endpoint configuration with admin API access
 
-- **System Requirements Check**:
-  - CPU: Minimum 8 cores recommended
-  - RAM: Minimum 16 GB recommended
-  - Storage: Minimum 1 TB recommended
-  - Automatic system verification
-  - Warning notifications for insufficient resources
+### Network Options
+- Mainnet deployment
+- Fuji Testnet deployment
 
-- **Network Environment Support**:
-  - Residential Network (Dynamic IP)
-  - Cloud/Datacenter (Static IP)
-  - Automatic IP detection and configuration
-  - OpenDNS resolution for dynamic IPs
+### IP Configuration
+- Residential networks (Dynamic IP with OpenDNS)
+- Cloud/Datacenter (Static IP auto-detection)
 
-- **Automated Setup**:
-  - Go 1.22.8 installation and configuration
-  - Dependency management (gcc, g++, make)
-  - User creation and permission handling
-  - Directory structure setup
-  - Systemd service configuration
-  - Network selection (Mainnet/Fuji)
+### Management Features
+- Automated dependency installation
+- Systemd service configuration
+- One-click upgrades
+- Clean removal/reinstallation
+- Automatic service recovery
+- Comprehensive logging
 
-- **Management Features**:
-  - One-click installation and upgrades
-  - Automated backup with timestamps
-  - Restore functionality
-  - Service management
-  - Node monitoring and status checks
-  - Bootstrap progress tracking
+## Quick Installation
 
-## Prerequisites
-
-- Ubuntu Server 20.04.6 or 24.04.1
-- Root or sudo access
-- Internet connectivity
-- Minimum system requirements:
-  - 8 CPU cores
-  - 16 GB RAM
-  - 1 TB storage
-  - Reliable network connection
-
-## Quick Start
+Deploy your Avalanche node with a single command:
 
 ```bash
-wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/install-avalanche-node.sh
-chmod 755 install-avalanche-node.sh
-sudo ./install-avalanche-node.sh
+wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/install-avalanche-node.sh;\
+chmod 755 install-avalanche-node.sh;\
+./install-avalanche-node.sh
 ```
 
-## Installation Process
+## System Requirements
 
-1. **System Check**:
-   - Verifies CPU, RAM, and storage requirements
-   - Checks and installs dependencies
-   - Sets up system user and directories
+### Minimum Hardware
+- CPU: 8 cores / 16 threads
+- RAM: 16 GB
+- Storage: 1 TB SSD (NVMe recommended)
+- Network: 1 Gbps connection
 
-2. **Network Selection**:
-   - Choose between Mainnet and Fuji Testnet
-   - Detailed descriptions of each network provided
+### Software
+- Ubuntu 20.04 LTS or 24.04 LTS
+- Root privileges required
 
-3. **Environment Setup**:
-   - Select between residential or datacenter deployment
-   - Automatic IP detection for static IPs
-   - Configuration of network settings
+## Node Management
 
-4. **Node Configuration**:
-   - Automated setup based on node type
-   - Security-focused default settings
-   - Custom chain configurations
-
-## Node Types and Configurations
-
-### Validator Node
-- State sync enabled
-- Private RPC (localhost only)
-- Minimal API exposure
-- Optimized for validation
-- Metrics enabled
-- Secure default settings
-
-### Historical Node
-- Full indexing enabled
-- Pruning disabled
-- Complete transaction history
-- API admin enabled
-- Custom chain configuration support
-- Metrics monitoring
-
-### API Node
-- Public RPC endpoints
-- All APIs enabled
-- State sync enabled
-- Full indexing
-- IPCS enabled
-- Metrics and monitoring
-
-## Post-Installation Information
-
-After installation, the script provides comprehensive information about your node:
-
-### 1. Node Identification
-- Display of Node ID
-- Network type (Mainnet/Fuji)
-- Node type (Validator/Historical/API)
-
-### 2. Bootstrap Status
-- Real-time bootstrap progress
-- Status for all chains (P-Chain, X-Chain, C-Chain)
-- Estimated completion indicators
-
-### 3. Management Commands
+### Basic Commands
 ```bash
-# Start the node
+# Start your node
 sudo systemctl start avalanchego
 
-# Stop the node
+# Stop your node
 sudo systemctl stop avalanchego
-
-# Restart the node
-sudo systemctl restart avalanchego
 
 # Check node status
 sudo systemctl status avalanchego
 
-# Monitor logs
+# View real-time logs
 sudo journalctl -u avalanchego -f
-
-# Check bootstrap progress
-curl -X POST --data '{
-    "jsonrpc":"2.0",
-    "id"     :1,
-    "method" :"info.isBootstrapped",
-    "params": {
-        "chain":"X"
-    }
-}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
 ```
 
-### 4. Node-Specific Information
-- Validator: Staking instructions and NodeID usage
-- API: Available endpoints and access information
-- Historical: Data management and indexing details
+### Maintenance
+- **Upgrade**: Re-run the installation script and select the upgrade option
+- **Reinstall**: Choose the clean installation option during script execution
+- **Remove**: Script provides clean removal of all components
 
 ## Directory Structure
 
 ```
-/home/avax/
-├── .avalanchego/
-│   ├── configs/
-│   │   ├── node.json
-│   │   └── chains/
-│   └── db/
+/opt/avalanchego/
 ├── avalanchego/
-└── avalanche-backup/
+│   ├── build/
+│   └── scripts/
+└── [node data]
 ```
 
-## Maintenance
+## Security Considerations
 
-### Backup
-- Automated backup creation
-- Timestamped backup files (YYYYMMDD_HHMMSS format)
-- Safe service management during backup
-- Backup storage in `/home/avax/avalanche-backup`
+- API node exposes public endpoints - ensure proper firewall configuration
+- Validator nodes maintain restricted access by default
+- System user 'avalanche' created with minimal privileges
+- Automatic service restart on failure
 
-### Restore
-- List of available backups
-- Guided restoration process
-- Automatic service management
-- Permission preservation
+## Troubleshooting
 
-### Monitoring
-- Service status checking
-- Bootstrap progress tracking
-- Chain status verification
-- Real-time node information
-- Resource usage monitoring
+1. **Node Won't Start**
+   - Check logs: `sudo journalctl -u avalanchego -n 100`
+   - Verify permissions: `ls -la /opt/avalanchego`
+   - Ensure ports are available: `netstat -tulpn | grep 9650`
 
-## Security Features
-
-- Dedicated system user (avax)
-- Secure default configurations
-- Private RPC for validator nodes
-- Limited API exposure where appropriate
-- File permission management
-- Network security settings
-- Automated security configurations
-
-## Support
-
-For support, please contact Rise & Shine Management.
-
-## Documentation
-
-For detailed information about Avalanche nodes, visit:
-- [Avalanche Documentation](https://docs.avax.network/)
-- [Node Operation Guide](https://docs.avax.network/nodes)
-- [Validator Guide](https://docs.avax.network/nodes/validate)
+2. **Bootstrap Issues**
+   - Monitor progress in logs
+   - Verify network connectivity
+   - Check disk space: `df -h`
 
 ## License
 
-This software is proprietary and confidential. Unauthorized copying, modification, distribution, or use of this software, via any medium, is strictly prohibited. All rights reserved by Rise & Shine Management.
+Proprietary software of Rise & Shine Management. All rights reserved.
 
-## Author
+This software and associated documentation files (the "Software") are the exclusive property of Rise & Shine Management. The Software is protected by copyright laws and international copyright treaties, as well as other intellectual property laws and treaties.
 
-Developed by Nodestrdamus for Rise & Shine Management. 
+Unauthorized copying, modification, distribution, or use of this Software, via any medium, is strictly prohibited without the express written permission of Rise & Shine Management.
+
+## Support
+
+For technical support or licensing inquiries:
+- Rise & Shine Management
+- Website: [Your Website]
+- Email: [Support Email]
+
+## Acknowledgments
+
+Built on the AvalancheGo platform:
+- [AvalancheGo Repository](https://github.com/ava-labs/avalanchego)
+- [Avalanche Documentation](https://docs.avax.network/) 
