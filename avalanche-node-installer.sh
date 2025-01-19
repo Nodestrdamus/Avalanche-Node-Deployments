@@ -36,8 +36,6 @@ print_error() {
 }
 
 check_requirements() {
-    print_step "Checking system requirements..."
-
     # Check if running as root
     if [[ $EUID -eq 0 ]]; then
         print_error "This script should not be run as root"
@@ -45,73 +43,21 @@ check_requirements() {
     fi
 
     # Check Ubuntu version
-    if ! lsb_release -a 2>/dev/null | grep -q "Ubuntu 24.04"; then
-        print_error "This installer requires Ubuntu 24.04.1"
+    if ! lsb_release -a 2>/dev/null | grep -q "Ubuntu"; then
+        print_error "This installer requires Ubuntu 20.04 or 24.04"
         exit 1
     fi
 
-    # Initialize requirements check status
-    local requirements_met=true
-
-    # Check CPU cores
-    CPU_CORES=$(nproc)
-    if [ "$CPU_CORES" -lt 8 ]; then
-        requirements_met=false
-        print_warning "Your system has less than the recommended 8 CPU cores (detected: ${CPU_CORES})"
-        read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    UBUNTU_VERSION=$(lsb_release -rs)
+    case $UBUNTU_VERSION in
+        20.04|24.04)
+            echo "✓ Ubuntu ${UBUNTU_VERSION} detected"
+            ;;
+        *)
+            print_error "This installer requires Ubuntu 20.04 or 24.04 (detected: ${UBUNTU_VERSION})"
             exit 1
-        fi
-    else
-        echo "✓ CPU cores check passed (detected: ${CPU_CORES} cores)"
-    fi
-
-    # Check RAM
-    TOTAL_RAM=$(free -g | awk '/^Mem:/{print $2}')
-    if [ "$TOTAL_RAM" -lt 16 ]; then
-        requirements_met=false
-        print_warning "Your system has less than the recommended 16GB of RAM (detected: ${TOTAL_RAM}GB)"
-        read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    else
-        echo "✓ RAM check passed (detected: ${TOTAL_RAM}GB)"
-    fi
-
-    # Check disk space and type
-    DISK_SPACE=$(df -BG / | awk '/^\/dev/{print $4}' | tr -d 'G')
-    if [ "$DISK_SPACE" -lt 1000 ]; then
-        requirements_met=false
-        print_warning "Your system has less than the recommended 1TB of free disk space (detected: ${DISK_SPACE}GB)"
-        read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    else
-        echo "✓ Disk space check passed (detected: ${DISK_SPACE}GB free)"
-    fi
-
-    # Check if using SSD
-    ROTATIONAL=$(lsblk -d -o name,rota | grep -v "loop" | grep "1")
-    if [ ! -z "$ROTATIONAL" ]; then
-        print_warning "HDD detected. Avalanche recommends SSD storage for optimal performance."
-        read -p "Are you running in a VM or want to continue anyway? [y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_error "Installation aborted. Please use SSD storage for optimal performance."
-            exit 1
-        else
-            print_warning "Proceeding with installation despite storage warning..."
-        fi
-    fi
-
-    if [ "$requirements_met" = true ]; then
-        print_step "All system requirements met! Proceeding with installation..."
-    fi
+            ;;
+    esac
 }
 
 install_dependencies() {
