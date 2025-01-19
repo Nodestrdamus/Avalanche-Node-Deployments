@@ -261,6 +261,15 @@ EOF
 # Setup systemd service
 setup_service() {
     local network_id=$1
+    
+    # Create log files with proper permissions
+    touch "$LOG_DIR/avalanchego.log"
+    touch "$LOG_DIR/avalanchego.error.log"
+    chown "$USER:$USER" "$LOG_DIR/avalanchego.log"
+    chown "$USER:$USER" "$LOG_DIR/avalanchego.error.log"
+    chmod 640 "$LOG_DIR/avalanchego.log"
+    chmod 640 "$LOG_DIR/avalanchego.error.log"
+    
     cat > /etc/systemd/system/avalanchego.service <<EOF
 [Unit]
 Description=AvalancheGo systemd service
@@ -284,6 +293,16 @@ EOF
     systemctl daemon-reload
     systemctl enable avalanchego
     systemctl start avalanchego
+    
+    # Give the service a moment to start
+    sleep 5
+    
+    # Check if service started successfully
+    if ! systemctl is-active --quiet avalanchego; then
+        print_message "Warning: Service failed to start. Checking logs..." "$RED"
+        journalctl -u avalanchego -n 50 --no-pager
+        exit 1
+    fi
 }
 
 # Backup node data
