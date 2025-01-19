@@ -18,6 +18,7 @@ NC='\033[0m' # No Color
 NETWORK_ID=""
 NODE_TYPE=""
 IP_TYPE=""
+RPC_ACCESS="private"  # Default to private for security
 
 # Node type constants
 VALIDATOR_NODE="validator"
@@ -176,6 +177,25 @@ setup_avalanchego() {
         fi
     fi
 
+    # Ask about RPC access
+    print_step "Configure RPC access:"
+    echo "RPC port should be public (this is a public API node) or private (this is a validator)?"
+    select RPC_ACCESS in "public" "private"; do
+        case $RPC_ACCESS in
+            public)
+                if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
+                    print_warning "Making RPC public on a validator node is not recommended!"
+                    read -p "Are you sure? [y/N]: " response
+                    if [[ ! $response =~ ^[Yy]$ ]]; then
+                        RPC_ACCESS="private"
+                    fi
+                fi
+                break;;
+            private)
+                break;;
+        esac
+    done
+
     generate_config
     setup_systemd_service
 }
@@ -207,9 +227,14 @@ generate_config() {
     CONFIG_FILE="$HOME_DIR/configs/node.json"
     
     # Base configuration common to all node types
+    local http_host="127.0.0.1"
+    if [ "$RPC_ACCESS" = "public" ]; then
+        http_host=""
+    fi
+    
     local base_config='{
         "network-id": "'${NETWORK_ID}'",
-        "http-host": "127.0.0.1",
+        "http-host": "'${http_host}'",
         "http-port": 9650,
         "staking-port": 9651,
         "db-dir": "'${HOME_DIR}'/db",
@@ -230,7 +255,6 @@ generate_config() {
     # Node type specific configurations
     case $NODE_TYPE in
         $VALIDATOR_NODE)
-            # For validator nodes, configure based on IP type
             local dynamic_nat_config=""
             if [ "$IP_TYPE" = "$RESIDENTIAL_IP" ]; then
                 dynamic_nat_config=',
@@ -320,14 +344,9 @@ configure_firewall() {
     sudo ufw allow 22/tcp comment 'SSH'
     sudo ufw allow 9651/tcp comment 'Avalanche P2P'
     
-    case $NODE_TYPE in
-        $VALIDATOR_NODE)
-            # Validator nodes should be more restrictive
-            ;;
-        $HISTORICAL_NODE|$API_NODE)
-            sudo ufw allow 9650/tcp comment 'Avalanche API'
-            ;;
-    esac
+    if [ "$RPC_ACCESS" = "public" ]; then
+        sudo ufw allow 9650/tcp comment 'Avalanche API'
+    fi
     
     sudo ufw --force enable
 }
