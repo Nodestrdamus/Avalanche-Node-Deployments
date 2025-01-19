@@ -5,8 +5,8 @@ set -e
 VERSION="1.0.0"
 GOVERSION="1.21.7"
 AVALANCHE_REPO="https://github.com/ava-labs/avalanchego.git"
-GOPATH="$HOME/go"
-AVALANCHEGO_PATH="$GOPATH/src/github.com/ava-labs/avalanchego"
+HOME_DIR="$HOME/.avalanchego"
+AVALANCHEGO_PATH="$HOME/avalanchego"
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,7 +16,6 @@ NC='\033[0m' # No Color
 
 # Configuration variables
 NETWORK_ID=""
-HOME_DIR="$HOME/.avalanchego"
 NODE_TYPE=""
 IP_TYPE=""
 
@@ -47,17 +46,9 @@ print_error() {
     echo -e "${RED}Error: $1${NC}"
 }
 
-get_latest_avalanchego_version() {
-    print_step "Getting latest AvalancheGo version..."
-    AVALANCHEGO_VERSION=$(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | grep -oP '"tag_name": "\K[^"]+' | sed 's/^v//')
-    if [ -z "$AVALANCHEGO_VERSION" ]; then
-        print_error "Failed to get latest AvalancheGo version"
-        exit 1
-    fi
-    echo "✓ Latest AvalancheGo version: v${AVALANCHEGO_VERSION}"
-}
-
 check_requirements() {
+    print_step "Checking system requirements..."
+    
     # Check if running as root
     if [[ $EUID -eq 0 ]]; then
         print_error "This script should not be run as root"
@@ -102,10 +93,16 @@ install_dependencies() {
         wget \
         jq \
         ufw \
-        lsb-release
+        lsb-release \
+        htop
 
-    # Install Go if not installed
-    if ! command -v go &> /dev/null; then
+    # Install Go if not installed or if version doesn't match
+    local current_go_version=""
+    if command -v go &> /dev/null; then
+        current_go_version=$(go version | awk '{print $3}' | sed 's/go//')
+    fi
+    
+    if [ "$current_go_version" != "$GOVERSION" ]; then
         print_step "Installing Go ${GOVERSION}..."
         wget "https://golang.org/dl/go${GOVERSION}.linux-amd64.tar.gz"
         sudo rm -rf /usr/local/go
@@ -113,9 +110,11 @@ install_dependencies() {
         rm "go${GOVERSION}.linux-amd64.tar.gz"
         
         # Set up Go environment
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
-        echo 'export GOPATH=$HOME/go' >> ~/.profile
-        echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.profile
+        if ! grep -q "GOPATH" ~/.profile; then
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
+            echo 'export GOPATH=$HOME/go' >> ~/.profile
+            echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.profile
+        fi
         source ~/.profile
     fi
 }
@@ -123,88 +122,83 @@ install_dependencies() {
 setup_avalanchego() {
     print_step "Setting up AvalancheGo from source..."
     
-    # Create GOPATH directory structure
-    mkdir -p $GOPATH/src/github.com/ava-labs
-    cd $GOPATH/src/github.com/ava-labs
+    cd $HOME
     
-    # Clone AvalancheGo
+    # Backup existing installation if it exists
     if [ -d "avalanchego" ]; then
-        print_warning "AvalancheGo directory already exists. Removing..."
-        rm -rf avalanchego
+        print_warning "Existing AvalancheGo installation found. Creating backup..."
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        
+        # Backup staking keys if they exist
+        if [ -f "$HOME_DIR/staking/staker.key" ] && [ -f "$HOME_DIR/staking/staker.crt" ]; then
+            print_step "Backing up existing staking keys..."
+            mkdir -p "avalanchego_backup_${timestamp}/staking"
+            cp "$HOME_DIR/staking/staker.key" "avalanchego_backup_${timestamp}/staking/"
+            cp "$HOME_DIR/staking/staker.crt" "avalanchego_backup_${timestamp}/staking/"
+            chmod 600 "avalanchego_backup_${timestamp}/staking/staker.key"
+            chmod 600 "avalanchego_backup_${timestamp}/staking/staker.crt"
+            echo "✓ Staking keys backed up"
+        fi
+        
+        mv avalanchego "avalanchego_backup_$timestamp"
     fi
+
+    # Clone and build AvalancheGo
     git clone $AVALANCHE_REPO
     cd avalanchego
-    
-    # Get latest version
-    get_latest_avalanchego_version
-    git checkout "v$AVALANCHEGO_VERSION"
-    
-    # Build AvalancheGo
+    git checkout $(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | jq -r '.tag_name')
     ./scripts/build.sh
 
-    # Create required directories
+    # Create required directories and set permissions
     mkdir -p "$HOME_DIR"/{db,configs,staking,logs}
+    chmod 700 "$HOME_DIR"
     chmod 700 "$HOME_DIR/staking"
+    chmod 755 "$HOME_DIR/configs"
+    chmod 700 "$HOME_DIR/db"
+    chmod 755 "$HOME_DIR/logs"
+    
+    # Ensure user owns all directories
+    sudo chown -R $USER:$USER "$HOME_DIR"
+    sudo chown -R $USER:$USER "$AVALANCHEGO_PATH"
 
-    # Generate staking keys for validator nodes
+    # For validator nodes, check for existing keys before generating new ones
     if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
-        if [ ! -f "$HOME_DIR/staking/staker.key" ]; then
-            print_step "Generating staking keys..."
-            
-            # Create a temporary config for key generation
-            local TEMP_CONFIG_FILE="$HOME_DIR/configs/temp_config.json"
-            echo '{
-                "network-id": "'${NETWORK_ID}'",
-                "staking-enabled": true,
-                "staking-tls-cert-file": "'${HOME_DIR}'/staking/staker.crt",
-                "staking-tls-key-file": "'${HOME_DIR}'/staking/staker.key",
-                "db-dir": "'${HOME_DIR}'/db",
-                "log-level": "info",
-                "http-host": "127.0.0.1"
-            }' > "$TEMP_CONFIG_FILE"
-
-            # Run avalanchego briefly to generate keys
-            "$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego" \
-                --config-file="$TEMP_CONFIG_FILE" &
-            
-            # Store the PID
-            AVALANCHE_PID=$!
-            
-            # Wait for key generation (max 10 seconds)
-            COUNTER=0
-            while [ $COUNTER -lt 10 ]; do
-                if [ -f "$HOME_DIR/staking/staker.key" ] && [ -f "$HOME_DIR/staking/staker.crt" ]; then
-                    echo "✓ Staking keys generated successfully"
-                    chmod 600 "$HOME_DIR/staking/staker.key"
-                    chmod 600 "$HOME_DIR/staking/staker.crt"
-                    sleep 1
-                    kill $AVALANCHE_PID 2>/dev/null || true
-                    wait $AVALANCHE_PID 2>/dev/null || true
-                    rm -f "$TEMP_CONFIG_FILE"
-                    break
-                fi
-                sleep 1
-                ((COUNTER++))
-            done
-            
-            # Check if keys were generated
-            if [ ! -f "$HOME_DIR/staking/staker.key" ] || [ ! -f "$HOME_DIR/staking/staker.crt" ]; then
-                kill $AVALANCHE_PID 2>/dev/null || true
-                wait $AVALANCHE_PID 2>/dev/null || true
-                rm -f "$TEMP_CONFIG_FILE"
-                print_error "Failed to generate staking keys"
-                exit 1
-            fi
+        # Check for backup keys first
+        if [ -f "avalanchego_backup_${timestamp}/staking/staker.key" ] && [ -f "avalanchego_backup_${timestamp}/staking/staker.crt" ]; then
+            print_step "Restoring existing staking keys..."
+            cp "avalanchego_backup_${timestamp}/staking/staker.key" "$HOME_DIR/staking/"
+            cp "avalanchego_backup_${timestamp}/staking/staker.crt" "$HOME_DIR/staking/"
+            chmod 600 "$HOME_DIR/staking/staker.key"
+            chmod 600 "$HOME_DIR/staking/staker.crt"
+            echo "✓ Staking keys restored"
         else
-            print_warning "Staking keys already exist, skipping generation"
+            generate_staking_keys
         fi
     fi
 
-    # Generate config
     generate_config
-
-    # Setup systemd service
     setup_systemd_service
+}
+
+generate_staking_keys() {
+    if [ ! -f "$HOME_DIR/staking/staker.key" ]; then
+        print_step "Generating staking keys..."
+        
+        "$AVALANCHEGO_PATH/build/avalanchego" \
+            --staking-tls-cert-file="$HOME_DIR/staking/staker.crt" \
+            --staking-tls-key-file="$HOME_DIR/staking/staker.key" || true
+        
+        if [ -f "$HOME_DIR/staking/staker.key" ] && [ -f "$HOME_DIR/staking/staker.crt" ]; then
+            chmod 600 "$HOME_DIR/staking/staker.key"
+            chmod 600 "$HOME_DIR/staking/staker.crt"
+            echo "✓ Staking keys generated successfully"
+        else
+            print_error "Failed to generate staking keys"
+            exit 1
+        fi
+    else
+        print_warning "Staking keys already exist, skipping generation"
+    fi
 }
 
 generate_config() {
@@ -299,16 +293,21 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=$USER
-ExecStart=$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego --config-file=${HOME_DIR}/configs/node.json
+Group=$USER
+WorkingDirectory=$AVALANCHEGO_PATH
+ExecStart=$AVALANCHEGO_PATH/build/avalanchego --config-file=${HOME_DIR}/configs/node.json
 Restart=always
 RestartSec=1
 LimitNOFILE=32768
 TimeoutStopSec=300
+StandardOutput=append:${HOME_DIR}/logs/avalanchego.log
+StandardError=append:${HOME_DIR}/logs/avalanchego.err
 
 [Install]
 WantedBy=multi-user.target
 EOL
 
+    sudo chmod 644 /etc/systemd/system/avalanchego.service
     sudo systemctl daemon-reload
     sudo systemctl enable avalanchego
 }
@@ -316,6 +315,8 @@ EOL
 configure_firewall() {
     print_step "Configuring firewall..."
     
+    sudo ufw default deny incoming
+    sudo ufw default allow outgoing
     sudo ufw allow 22/tcp comment 'SSH'
     sudo ufw allow 9651/tcp comment 'Avalanche P2P'
     
