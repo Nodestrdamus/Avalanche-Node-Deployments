@@ -17,6 +17,12 @@ A comprehensive installation and management script for deploying various types o
   - Automatic system verification
   - Warning notifications for insufficient resources
 
+- **Network Environment Support**:
+  - Residential Network (Dynamic IP)
+  - Cloud/Datacenter (Static IP)
+  - Automatic IP detection and configuration
+  - OpenDNS resolution for dynamic IPs
+
 - **Automated Setup**:
   - Go 1.22.8 installation and configuration
   - Dependency management (gcc, g++, make)
@@ -52,6 +58,27 @@ chmod 755 install-avalanche-node.sh
 sudo ./install-avalanche-node.sh
 ```
 
+## Installation Process
+
+1. **System Check**:
+   - Verifies CPU, RAM, and storage requirements
+   - Checks and installs dependencies
+   - Sets up system user and directories
+
+2. **Network Selection**:
+   - Choose between Mainnet and Fuji Testnet
+   - Detailed descriptions of each network provided
+
+3. **Environment Setup**:
+   - Select between residential or datacenter deployment
+   - Automatic IP detection for static IPs
+   - Configuration of network settings
+
+4. **Node Configuration**:
+   - Automated setup based on node type
+   - Security-focused default settings
+   - Custom chain configurations
+
 ## Node Types and Configurations
 
 ### Validator Node
@@ -78,6 +105,53 @@ sudo ./install-avalanche-node.sh
 - IPCS enabled
 - Metrics and monitoring
 
+## Post-Installation Information
+
+After installation, the script provides comprehensive information about your node:
+
+### 1. Node Identification
+- Display of Node ID
+- Network type (Mainnet/Fuji)
+- Node type (Validator/Historical/API)
+
+### 2. Bootstrap Status
+- Real-time bootstrap progress
+- Status for all chains (P-Chain, X-Chain, C-Chain)
+- Estimated completion indicators
+
+### 3. Management Commands
+```bash
+# Start the node
+sudo systemctl start avalanchego
+
+# Stop the node
+sudo systemctl stop avalanchego
+
+# Restart the node
+sudo systemctl restart avalanchego
+
+# Check node status
+sudo systemctl status avalanchego
+
+# Monitor logs
+sudo journalctl -u avalanchego -f
+
+# Check bootstrap progress
+curl -X POST --data '{
+    "jsonrpc":"2.0",
+    "id"     :1,
+    "method" :"info.isBootstrapped",
+    "params": {
+        "chain":"X"
+    }
+}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
+```
+
+### 4. Node-Specific Information
+- Validator: Staking instructions and NodeID usage
+- API: Available endpoints and access information
+- Historical: Data management and indexing details
+
 ## Directory Structure
 
 ```
@@ -91,43 +165,26 @@ sudo ./install-avalanche-node.sh
 └── avalanche-backup/
 ```
 
-## Usage
-
-1. Run the script with sudo privileges
-2. Select your desired node type from the menu
-3. Choose network (Mainnet or Fuji)
-4. Follow the prompts to complete installation
-
-### Menu Options
-1. Install/Upgrade Validator Node
-2. Install/Upgrade Historical Node
-3. Install/Upgrade API Node
-4. Manual Configuration
-5. Backup Node
-6. Restore Node
-7. Monitor Node Status
-8. Exit
-
 ## Maintenance
 
 ### Backup
-- Automatically stops the service
-- Creates timestamped backup (YYYYMMDD_HHMMSS format)
-- Restarts the service
-- Stores backups in `/home/avax/avalanche-backup`
+- Automated backup creation
+- Timestamped backup files (YYYYMMDD_HHMMSS format)
+- Safe service management during backup
+- Backup storage in `/home/avax/avalanche-backup`
 
 ### Restore
-- Lists available backups
-- Allows selection of backup file
-- Handles service management during restore
-- Verifies backup integrity
-- Maintains proper permissions
+- List of available backups
+- Guided restoration process
+- Automatic service management
+- Permission preservation
 
 ### Monitoring
 - Service status checking
 - Bootstrap progress tracking
 - Chain status verification
 - Real-time node information
+- Resource usage monitoring
 
 ## Security Features
 
@@ -137,10 +194,18 @@ sudo ./install-avalanche-node.sh
 - Limited API exposure where appropriate
 - File permission management
 - Network security settings
+- Automated security configurations
 
 ## Support
 
 For support, please contact Rise & Shine Management.
+
+## Documentation
+
+For detailed information about Avalanche nodes, visit:
+- [Avalanche Documentation](https://docs.avax.network/)
+- [Node Operation Guide](https://docs.avax.network/nodes)
+- [Validator Guide](https://docs.avax.network/nodes/validate)
 
 ## License
 

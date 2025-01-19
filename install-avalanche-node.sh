@@ -113,10 +113,59 @@ install_avalanchego() {
     "
 }
 
+# Select network environment
+select_network_environment() {
+    print_message "\nNetwork Environment Setup:" "$YELLOW"
+    echo -e "1) Residential Network (Dynamic IP)"
+    echo -e "2) Cloud/Datacenter (Static IP)"
+    echo -e "\nNote:"
+    echo -e "- Residential: For nodes running on home/dynamic IP connections"
+    echo -e "- Cloud/Datacenter: For nodes running with static IP addresses"
+    echo -e ""
+    
+    local ip_type=""
+    local public_ip=""
+    
+    while true; do
+        read -p "Enter your choice [1-2]: " env_choice
+        case $env_choice in
+            1)
+                print_message "Selected: Residential Network (Dynamic IP)" "$GREEN"
+                ip_type="dynamic"
+                break
+                ;;
+            2)
+                print_message "Selected: Cloud/Datacenter (Static IP)" "$GREEN"
+                ip_type="static"
+                # Try to detect public IP
+                public_ip=$(curl -s https://api.ipify.org)
+                if [ ! -z "$public_ip" ]; then
+                    echo -e "\nDetected public IP: $public_ip"
+                    read -p "Is this your static IP? [y/n]: " confirm
+                    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+                        read -p "Please enter your static IP: " public_ip
+                    fi
+                else
+                    read -p "Please enter your static IP: " public_ip
+                fi
+                break
+                ;;
+            *)
+                print_message "Invalid choice. Please enter 1 for Residential or 2 for Cloud/Datacenter" "$RED"
+                ;;
+        esac
+    done
+    
+    echo "$ip_type:$public_ip"
+}
+
 # Configure node based on type
 configure_node() {
     local node_type=$1
     local network_id=$2
+    local network_env=$3
+    local ip_type=${network_env%:*}
+    local public_ip=${network_env#*:}
     local config="{}"
 
     case $node_type in
@@ -131,7 +180,8 @@ configure_node() {
     "index-enabled": false,
     "db-dir": "${CHAIN_DATA_DIR}",
     "log-level": "info",
-    "public-ip-resolution-service": "opendns",
+    "public-ip-resolution-service": "$([ "$ip_type" = "dynamic" ] && echo "opendns" || echo "none")",
+    $([ "$ip_type" = "static" ] && echo "\"public-ip\": \"$public_ip\",")
     "http-tls-enabled": false,
     "metrics-enabled": true,
     "chain-config-dir": "${CONFIG_DIR}/chains"
@@ -149,7 +199,8 @@ EOF
     "db-dir": "${CHAIN_DATA_DIR}",
     "pruning-enabled": false,
     "log-level": "info",
-    "public-ip-resolution-service": "opendns",
+    "public-ip-resolution-service": "$([ "$ip_type" = "dynamic" ] && echo "opendns" || echo "none")",
+    $([ "$ip_type" = "static" ] && echo "\"public-ip\": \"$public_ip\",")
     "http-tls-enabled": false,
     "metrics-enabled": true,
     "chain-config-dir": "${CONFIG_DIR}/chains"
@@ -168,7 +219,8 @@ EOF
     "index-enabled": true,
     "db-dir": "${CHAIN_DATA_DIR}",
     "log-level": "info",
-    "public-ip-resolution-service": "opendns",
+    "public-ip-resolution-service": "$([ "$ip_type" = "dynamic" ] && echo "opendns" || echo "none")",
+    $([ "$ip_type" = "static" ] && echo "\"public-ip\": \"$public_ip\",")
     "http-tls-enabled": false,
     "metrics-enabled": true,
     "chain-config-dir": "${CONFIG_DIR}/chains"
@@ -238,16 +290,31 @@ restore_node() {
 
 # Select network
 select_network() {
-    echo "Select network:"
-    echo "1) Mainnet"
-    echo "2) Fuji (Testnet)"
-    read -p "Enter choice [1-2]: " network_choice
-
-    case $network_choice in
-        1) echo "1";;  # mainnet
-        2) echo "fuji";;  # fuji testnet
-        *) print_message "Invalid choice" "$RED"; exit 1;;
-    esac
+    print_message "\nSelect Network:" "$YELLOW"
+    echo -e "1) Mainnet (Production Network)"
+    echo -e "2) Fuji (Test Network)"
+    echo -e "\nNote:"
+    echo -e "- Mainnet is the production Avalanche network"
+    echo -e "- Fuji is the test network for development and testing"
+    echo -e ""
+    while true; do
+        read -p "Enter your choice [1-2]: " network_choice
+        case $network_choice in
+            1) 
+                print_message "Selected: Mainnet" "$GREEN"
+                echo "1"
+                break
+                ;;
+            2)
+                print_message "Selected: Fuji Testnet" "$GREEN"
+                echo "fuji"
+                break
+                ;;
+            *)
+                print_message "Invalid choice. Please enter 1 for Mainnet or 2 for Fuji Testnet" "$RED"
+                ;;
+        esac
+    done
 }
 
 # Monitor node status
@@ -264,6 +331,96 @@ monitor_node() {
             "chain":"X"
         }
     }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
+}
+
+# Display node information and management commands
+display_node_info() {
+    local node_type=$1
+    local network_id=$2
+    
+    print_message "\nNode Installation Complete!" "$GREEN"
+    print_message "\nImportant Node Information:" "$YELLOW"
+    echo -e "\n1. Node ID:"
+    echo "   $(journalctl -u avalanchego | grep "NodeID-" | tail -n 1 | awk -F'NodeID-' '{print "NodeID-"$2}')"
+    
+    echo -e "\n2. Node Status:"
+    echo "   Current status: $(systemctl is-active avalanchego)"
+    
+    echo -e "\n3. Bootstrap Status:"
+    echo "   Checking bootstrap progress for P-Chain, X-Chain, and C-Chain..."
+    for chain in "P" "X" "C"; do
+        bootstrap_status=$(curl -s -X POST --data '{
+            "jsonrpc":"2.0",
+            "id"     :1,
+            "method" :"info.isBootstrapped",
+            "params": {
+                "chain":"'"$chain"'"
+            }
+        }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info | grep -o 'true\|false')
+        echo "   $chain-Chain: ${bootstrap_status:-Checking...}"
+    done
+    
+    print_message "\nUseful Commands:" "$YELLOW"
+    echo -e "\n1. Service Management:"
+    echo "   Start node:   sudo systemctl start avalanchego"
+    echo "   Stop node:    sudo systemctl stop avalanchego"
+    echo "   Restart node: sudo systemctl restart avalanchego"
+    echo "   View status:  sudo systemctl status avalanchego"
+    
+    echo -e "\n2. Log Monitoring:"
+    echo "   View logs:    sudo journalctl -u avalanchego -f"
+    
+    echo -e "\n3. Configuration:"
+    echo "   Config file:  $CONFIG_FILE"
+    echo "   Data dir:     $CHAIN_DATA_DIR"
+    
+    echo -e "\n4. Bootstrap Progress:"
+    echo "   Check status: curl -X POST --data '{
+        \"jsonrpc\":\"2.0\",
+        \"id\"     :1,
+        \"method\" :\"info.isBootstrapped\",
+        \"params\": {
+            \"chain\":\"X\"
+        }
+    }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info"
+    
+    if [ "$node_type" = "validator" ]; then
+        echo -e "\n5. Validator Info:"
+        echo "   - Your NodeID is required for staking"
+        echo "   - Ensure node is fully bootstrapped before staking"
+        echo "   - Keep your node running and maintain good network connectivity"
+    fi
+    
+    print_message "\nNext Steps:" "$GREEN"
+    case $node_type in
+        "validator")
+            echo "1. Wait for node to finish bootstrapping"
+            echo "2. Visit https://wallet.avax.network/ to stake your AVAX"
+            echo "3. Use your NodeID when adding a validator"
+            ;;
+        "api")
+            echo "1. Wait for node to finish bootstrapping"
+            echo "2. API endpoints will be available at: http://localhost:9650"
+            echo "3. Monitor your node's performance and resource usage"
+            ;;
+        "historical")
+            echo "1. Wait for node to finish bootstrapping and indexing"
+            echo "2. Monitor disk usage as the node accumulates historical data"
+            echo "3. Use API endpoints to query historical transactions"
+            ;;
+    esac
+    
+    print_message "\nNeed help? Check the documentation at https://docs.avax.network/" "$YELLOW"
+    
+    # Prompt to save information
+    echo -e "\nWould you like to save this information to a file? [y/n]"
+    read -r save_info
+    if [[ $save_info == "y" || $save_info == "Y" ]]; then
+        local info_file="$HOME_DIR/node-info-$(date +%Y%m%d_%H%M%S).txt"
+        display_node_info "$node_type" "$network_id" > "$info_file" 2>&1
+        chown "$USER:$USER" "$info_file"
+        print_message "Information saved to: $info_file" "$GREEN"
+    fi
 }
 
 # Main menu
@@ -289,13 +446,17 @@ main_menu() {
                 setup_user
                 install_avalanchego
                 network_id=$(select_network)
+                network_env=$(select_network_environment)
+                local node_type
                 case $choice in
-                    1) configure_node "validator" "$network_id";;
-                    2) configure_node "historical" "$network_id";;
-                    3) configure_node "api" "$network_id";;
+                    1) node_type="validator";;
+                    2) node_type="historical";;
+                    3) node_type="api";;
                 esac
+                configure_node "$node_type" "$network_id" "$network_env"
                 setup_service "$network_id"
                 print_message "Installation/Upgrade completed successfully!" "$GREEN"
+                display_node_info "$node_type" "$network_id"
                 ;;
             4)
                 check_root
