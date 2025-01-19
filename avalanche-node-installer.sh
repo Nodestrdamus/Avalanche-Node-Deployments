@@ -98,8 +98,15 @@ check_requirements() {
     # Check if using SSD
     ROTATIONAL=$(lsblk -d -o name,rota | grep -v "loop" | grep "1")
     if [ ! -z "$ROTATIONAL" ]; then
-        print_error "HDD detected. Avalanche requires SSD storage for optimal performance."
-        exit 1
+        print_warning "HDD detected. Avalanche recommends SSD storage for optimal performance."
+        read -p "Are you running in a VM or want to continue anyway? [y/n]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_error "Installation aborted. Please use SSD storage for optimal performance."
+            exit 1
+        else
+            print_warning "Proceeding with installation despite storage warning..."
+        fi
     fi
 
     if [ "$requirements_met" = true ]; then
