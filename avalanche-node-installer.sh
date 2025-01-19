@@ -458,13 +458,6 @@ start_node() {
     # Check if node is running
     if systemctl is-active --quiet avalanchego; then
         echo "✓ Node started successfully"
-        print_step "Initial Bootstrap Status Check"
-        echo "Note: Chains will show as 'still bootstrapping' until the process completes"
-        echo "This is normal and may take several days"
-        echo ""
-        check_bootstrap_status "P"
-        check_bootstrap_status "X"
-        check_bootstrap_status "C"
         
         # Get NodeID
         sleep 2
