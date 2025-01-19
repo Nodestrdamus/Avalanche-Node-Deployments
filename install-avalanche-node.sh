@@ -371,7 +371,7 @@ display_node_info() {
     local nodeid=""
     print_message "Waiting for NodeID to appear (this may take a few seconds)..." "$YELLOW"
     while [ $retries -lt 30 ]; do
-        nodeid=$(journalctl -u avalanchego -n 100 --no-pager | grep -o "NodeID-[A-Za-z0-9]*" | tail -n 1)
+        nodeid=$(sudo journalctl -u avalanchego | grep "NodeID-" | head -n 1 | awk '{print $NF}')
         if [ ! -z "$nodeid" ]; then
             print_message "Your Node ID is: $nodeid" "$GREEN"
             break
@@ -383,9 +383,9 @@ display_node_info() {
     if [ -z "$nodeid" ]; then
         print_message "\nNodeID not yet available. Follow these steps to get your NodeID:" "$YELLOW"
         echo "1. Wait a few moments for the node to fully start"
-        echo "2. Run this command to check the logs:"
-        echo "   sudo journalctl -u avalanchego -f"
-        echo "3. Look for a line containing 'NodeID-'"
+        echo "2. Run this command to get your NodeID:"
+        echo "   sudo journalctl -u avalanchego | grep \"NodeID\""
+        echo "3. The NodeID will be displayed in the format: NodeID-XXXXXXXX..."
     fi
     
     print_message "\n=== Node Management Commands ===" "$YELLOW"
@@ -399,16 +399,13 @@ display_node_info() {
     
     echo -e "\n3. View Node Logs:"
     echo "   sudo journalctl -u avalanchego -f   # Follow logs in real-time"
-    echo "   sudo journalctl -u avalanchego -n 100 # View last 100 log lines"
-    
-    echo -e "\n4. Configuration Location:"
-    echo "   Config file: $CONFIG_FILE"
+    echo "   sudo journalctl -u avalanchego | grep \"NodeID\"  # Find your NodeID"
     
     if [ "$node_type" = "validator" ]; then
         print_message "\n=== Validator Node Information ===" "$YELLOW"
         echo "1. Save your NodeID - You'll need it for staking"
         echo "2. Ensure your node is running: sudo systemctl status avalanchego"
-        echo "3. Monitor logs until fully bootstrapped: sudo journalctl -u avalanchego -f"
+        echo "3. Monitor logs: sudo journalctl -u avalanchego -f"
         echo "4. Visit https://wallet.avax.network/ to stake your AVAX"
     fi
     
