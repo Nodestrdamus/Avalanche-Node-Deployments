@@ -124,6 +124,30 @@ Backup locations:
 - Configurations: `~/.avalanchego/backup_TIMESTAMP/configs/`
 - Staking keys: `~/.avalanchego/backup_TIMESTAMP/staking/` (for validator nodes)
 
+### Restore Previous Version
+
+If you need to restore a previous version:
+
+```bash
+./avalanche-node-installer.sh --restore
+```
+
+This will:
+1. List all available backups with timestamps
+2. Let you select which backup to restore
+3. Create a backup of the current version before restoring
+4. Restore the selected backup
+5. Restart the node automatically
+
+Backups are stored in:
+- `~/.avalanchego/backup_TIMESTAMP/` - Regular backups from updates
+- `~/.avalanchego/backup_TIMESTAMP_pre_restore/` - Backups created before restores
+
+Each backup contains:
+- Node configurations
+- Staking keys (for validator nodes)
+- Network settings
+
 ## Node Management
 
 After installation, use these commands to manage your node:

@@ -450,23 +450,18 @@ generate_staking_keys() {
         ./build/avalanchego \
             --staking-tls-cert-file="${HOME_DIR}/staking/staker.crt" \
             --staking-tls-key-file="${HOME_DIR}/staking/staker.key" \
-            --staking-enabled=true \
-            --network-id="local" \
-            --db-dir="${HOME_DIR}/db-temp" \
-            --log-level="OFF" \
+            --chain-config-dir="" \
+            --http-host="" \
             --http-port=9650 \
             --staking-port=9651 \
-            --bootstrap-ips="" \
-            --bootstrap-ids="" &
+            --log-level=OFF \
+            --genesis-file="" &
 
         # Wait a moment for the keys to be generated
         sleep 5
         
         # Kill the temporary node
         pkill -f avalanchego
-        
-        # Clean up temporary directory
-        rm -rf "${HOME_DIR}/db-temp"
         
         # Verify the keys were generated
         if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
@@ -523,8 +518,79 @@ print_completion() {
     echo "=================================================="
 }
 
+restore_previous_version() {
+    print_step "Restoring previous version..."
+    
+    # List available backups
+    local BACKUP_DIR="$HOME_DIR"
+    local backups=($(ls -d ${BACKUP_DIR}/backup_* 2>/dev/null))
+    
+    if [ ${#backups[@]} -eq 0 ]; then
+        print_error "No backup versions found"
+        exit 1
+    fi
+    
+    echo "Available backups:"
+    for i in "${!backups[@]}"; do
+        local backup_date=$(basename "${backups[$i]}" | cut -d'_' -f2-)
+        echo "$((i+1))) ${backup_date}"
+    done
+    
+    # Get user selection
+    local selection
+    while true; do
+        read -p "Select backup to restore [1-${#backups[@]}] or 'q' to quit: " selection
+        if [[ "$selection" == "q" ]]; then
+            exit 0
+        elif [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#backups[@]}" ]; then
+            break
+        fi
+        echo "Invalid selection. Please try again."
+    done
+    
+    local SELECTED_BACKUP="${backups[$((selection-1))]}"
+    
+    # Stop the service
+    print_step "Stopping AvalancheGo service..."
+    sudo systemctl stop avalanchego
+    
+    # Backup current version before restoring
+    local CURRENT_BACKUP="$HOME_DIR/backup_$(date +%Y%m%d_%H%M%S)_pre_restore"
+    print_step "Creating backup of current version at: $CURRENT_BACKUP"
+    mkdir -p "$CURRENT_BACKUP"
+    cp -r "$HOME_DIR/configs" "$CURRENT_BACKUP/"
+    if [ -d "$HOME_DIR/staking" ]; then
+        cp -r "$HOME_DIR/staking" "$CURRENT_BACKUP/"
+    fi
+    
+    # Restore selected backup
+    print_step "Restoring from backup: $SELECTED_BACKUP"
+    cp -r "$SELECTED_BACKUP/configs/"* "$HOME_DIR/configs/"
+    if [ -d "$SELECTED_BACKUP/staking" ]; then
+        cp -r "$SELECTED_BACKUP/staking/"* "$HOME_DIR/staking/"
+    fi
+    
+    # Set correct permissions
+    chmod 600 "$HOME_DIR/staking/staker.key"
+    chmod 644 "$HOME_DIR/staking/staker.crt"
+    
+    # Start the service
+    print_step "Starting AvalancheGo service..."
+    sudo systemctl start avalanchego
+    
+    print_step "Restore completed successfully!"
+    echo "Previous version backed up to: $CURRENT_BACKUP"
+    echo "Restored from: $SELECTED_BACKUP"
+}
+
 main() {
     print_banner
+    
+    # Check if restore option is requested
+    if [ "$1" == "--restore" ]; then
+        restore_previous_version
+        exit 0
+    fi
     
     # Check for existing installation and updates
     if check_for_updates; then
@@ -545,4 +611,5 @@ main() {
     print_completion
 }
 
-main 
+# Pass command line arguments to main
+main "$@" 
