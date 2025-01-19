@@ -16,7 +16,7 @@ NC='\033[0m'
 GOVERSION="1.22.8"
 USER="avax"
 HOME_DIR="/home/$USER"
-AVALANCHEGO_HOME="$HOME_DIR/AvalancheGo"
+AVALANCHEGO_HOME="/home/AvalancheGo"
 AVALANCHE_DATA_DIR="$AVALANCHEGO_HOME/.avalanchego"
 CONFIG_DIR="$AVALANCHE_DATA_DIR/configs"
 CONFIG_FILE="$CONFIG_DIR/node.json"
@@ -24,6 +24,7 @@ CHAIN_DATA_DIR="$AVALANCHE_DATA_DIR/db"
 BACKUP_DIR="$AVALANCHEGO_HOME/backups"
 LOG_DIR="$AVALANCHEGO_HOME/logs"
 BIN_DIR="$AVALANCHEGO_HOME/bin"
+SRC_DIR="$AVALANCHEGO_HOME/src"
 MIN_CPU_CORES=8
 MIN_RAM_GB=16
 MIN_STORAGE_GB=1024
@@ -45,15 +46,21 @@ create_directories() {
     mkdir -p "$BACKUP_DIR"
     mkdir -p "$LOG_DIR"
     mkdir -p "$BIN_DIR"
+    mkdir -p "$SRC_DIR"
+    mkdir -p "/home/$USER/go"  # Create GOPATH directory
     
     # Set permissions
     chown -R "$USER:$USER" "$HOME_DIR"
+    chown -R "$USER:$USER" "$AVALANCHEGO_HOME"
+    chown -R "$USER:$USER" "/home/$USER/go"
     chmod 750 "$AVALANCHEGO_HOME"
     chmod 750 "$AVALANCHE_DATA_DIR"
     chmod 750 "$CONFIG_DIR"
     chmod 750 "$BACKUP_DIR"
     chmod 750 "$LOG_DIR"
     chmod 750 "$BIN_DIR"
+    chmod 750 "$SRC_DIR"
+    chmod -R 750 "/home/$USER/go"
 }
 
 # Check if running as root
@@ -92,8 +99,14 @@ setup_user() {
     print_message "Setting up Avalanche user..." "$YELLOW"
     if ! id "$USER" &>/dev/null; then
         useradd -m -s /bin/bash "$USER"
+        # Set up environment for avax user
+        echo 'export GOPATH=/home/avax/go' >> "/home/$USER/.profile"
+        echo 'export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin' >> "/home/$USER/.profile"
         print_message "Created user: $USER" "$GREEN"
     fi
+    
+    # Ensure .profile is owned by avax user
+    chown "$USER:$USER" "/home/$USER/.profile"
 }
 
 # Check and install dependencies
@@ -119,13 +132,11 @@ install_dependencies() {
 install_avalanchego() {
     print_message "\n=== Installing/Upgrading AvalancheGo ===" "$YELLOW"
     su - "$USER" -c "
-        cd $AVALANCHEGO_HOME
-        if [ ! -d src ]; then
-            mkdir -p src
-            cd src
+        cd $SRC_DIR
+        if [ ! -d avalanchego ]; then
             git clone https://github.com/ava-labs/avalanchego.git
         fi
-        cd src/avalanchego
+        cd avalanchego
         git fetch
         git checkout master
         git pull
@@ -281,10 +292,13 @@ Type=simple
 User=$USER
 Restart=always
 RestartSec=1
+Environment=GOPATH=/home/avax/go
+Environment=PATH=/usr/local/go/bin:/home/avax/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=$BIN_DIR/avalanchego --config-file=$CONFIG_FILE
 LimitNOFILE=32768
 StandardOutput=append:$LOG_DIR/avalanchego.log
 StandardError=append:$LOG_DIR/avalanchego.error.log
+WorkingDirectory=$AVALANCHEGO_HOME
 
 [Install]
 WantedBy=multi-user.target
