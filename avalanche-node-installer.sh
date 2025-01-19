@@ -17,7 +17,6 @@ NC='\033[0m' # No Color
 # Configuration variables
 NETWORK_ID=""
 HOME_DIR="$HOME/.avalanchego"
-UPDATE_MODE=false
 NODE_TYPE=""
 IP_TYPE=""
 
@@ -48,15 +47,6 @@ print_error() {
     echo -e "${RED}Error: $1${NC}"
 }
 
-get_current_avalanchego_version() {
-    if [ -f "$AVALANCHEGO_PATH/build/avalanchego" ]; then
-        CURRENT_VERSION=$($AVALANCHEGO_PATH/build/avalanchego --version | grep -oP 'avalanche/\K[0-9]+\.[0-9]+\.[0-9]+')
-        echo "$CURRENT_VERSION"
-    else
-        echo ""
-    fi
-}
-
 get_latest_avalanchego_version() {
     print_step "Getting latest AvalancheGo version..."
     AVALANCHEGO_VERSION=$(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | grep -oP '"tag_name": "\K[^"]+' | sed 's/^v//')
@@ -65,129 +55,6 @@ get_latest_avalanchego_version() {
         exit 1
     fi
     echo "✓ Latest AvalancheGo version: v${AVALANCHEGO_VERSION}"
-}
-
-backup_node_data() {
-    print_step "Backing up node data..."
-    BACKUP_DIR="$HOME_DIR/backup_$(date +%Y%m%d_%H%M%S)"
-    
-    # Create backup directory
-    mkdir -p "$BACKUP_DIR"
-    
-    # Backup configuration
-    if [ -f "$HOME_DIR/configs/node.json" ]; then
-        cp -r "$HOME_DIR/configs" "$BACKUP_DIR/"
-    fi
-    
-    # Backup staking keys
-    if [ -d "$HOME_DIR/staking" ]; then
-        cp -r "$HOME_DIR/staking" "$BACKUP_DIR/"
-    fi
-    
-    # Backup chain configs if they exist
-    if [ -d "$HOME_DIR/chains" ]; then
-        cp -r "$HOME_DIR/chains" "$BACKUP_DIR/"
-    fi
-    
-    echo "✓ Backup created at: $BACKUP_DIR"
-}
-
-check_for_updates() {
-    print_step "Checking for updates..."
-    CURRENT_VERSION=$(get_current_avalanchego_version)
-    
-    if [ -z "$CURRENT_VERSION" ]; then
-        print_warning "AvalancheGo not currently installed"
-        return
-    fi
-    
-    get_latest_avalanchego_version
-    
-    if [ "$CURRENT_VERSION" = "$AVALANCHEGO_VERSION" ]; then
-        echo "✓ You are running the latest version (v${CURRENT_VERSION})"
-        exit 0
-    else
-        echo "New version available: v${AVALANCHEGO_VERSION} (current: v${CURRENT_VERSION})"
-        read -p "Would you like to update? [y/N] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            UPDATE_MODE=true
-        else
-            exit 0
-        fi
-    fi
-}
-
-update_avalanchego() {
-    print_step "Performing in-place upgrade of AvalancheGo..."
-    
-    # Create backup
-    backup_node_data
-    
-    # Stop the service
-    print_step "Stopping AvalancheGo service..."
-    sudo systemctl stop avalanchego
-    
-    # Wait for service to fully stop
-    sleep 5
-    
-    # Update the code
-    cd "$AVALANCHEGO_PATH"
-    print_step "Fetching latest code..."
-    git fetch --all
-    git checkout "v$AVALANCHEGO_VERSION"
-    
-    print_step "Building AvalancheGo..."
-    ./scripts/build.sh
-    
-    # Update systemd service if needed
-    setup_systemd_service
-    
-    print_step "Starting AvalancheGo service..."
-    sudo systemctl daemon-reload
-    sudo systemctl start avalanchego
-    
-    # Wait for service to start
-    sleep 5
-    
-    # Check if service is running
-    if systemctl is-active --quiet avalanchego; then
-        print_step "Update completed successfully!"
-        echo "New version: v${AVALANCHEGO_VERSION}"
-        echo "Backup location: $BACKUP_DIR"
-        echo "✓ Node is running"
-    else
-        print_error "Node failed to start after update. Rolling back..."
-        rollback_update
-    fi
-}
-
-rollback_update() {
-    print_step "Rolling back to previous version..."
-    
-    # Stop the service
-    sudo systemctl stop avalanchego
-    
-    # Restore from backup
-    if [ -d "$BACKUP_DIR" ]; then
-        cp -r "$BACKUP_DIR/configs"/* "$HOME_DIR/configs/"
-        cp -r "$BACKUP_DIR/staking"/* "$HOME_DIR/staking/"
-        if [ -d "$BACKUP_DIR/chains" ]; then
-            cp -r "$BACKUP_DIR/chains"/* "$HOME_DIR/chains/"
-        fi
-    fi
-    
-    # Checkout previous version
-    cd "$AVALANCHEGO_PATH"
-    git checkout "v$CURRENT_VERSION"
-    ./scripts/build.sh
-    
-    # Start service
-    sudo systemctl start avalanchego
-    
-    print_error "Update failed. Rolled back to v${CURRENT_VERSION}"
-    echo "Please check the logs for more information: sudo journalctl -u avalanchego -n 100 --no-pager"
-    exit 1
 }
 
 check_requirements() {
@@ -428,26 +295,6 @@ configure_firewall() {
     sudo ufw --force enable
 }
 
-check_bootstrap_status() {
-    local chain=$1
-    local result=$(curl -s -X POST --data "{
-        \"jsonrpc\":\"2.0\",
-        \"id\":1,
-        \"method\":\"info.isBootstrapped\",
-        \"params\":{
-            \"chain\":\"$chain\"
-        }
-    }" -H 'content-type:application/json;' 127.0.0.1:9650/ext/info)
-    
-    if [[ $result == *"true"* ]]; then
-        echo "✓ $chain-Chain is bootstrapped"
-        return 0
-    else
-        echo "⧖ $chain-Chain is still bootstrapping"
-        return 1
-    fi
-}
-
 start_node() {
     print_step "Starting AvalancheGo node..."
     sudo systemctl start avalanchego
@@ -503,15 +350,6 @@ start_node() {
 main() {
     print_banner
     
-    # Check for --update flag
-    if [ "$1" = "--update" ]; then
-        check_for_updates
-        if [ "$UPDATE_MODE" = true ]; then
-            update_avalanchego
-            exit 0
-        fi
-    fi
-    
     check_requirements
     install_dependencies
     
@@ -564,33 +402,6 @@ main() {
     setup_avalanchego
     configure_firewall
     start_node
-    
-    print_step "Installation completed successfully!"
-    echo "=================================================="
-    echo "Node Type: $NODE_TYPE"
-    echo "Network: $NETWORK_ID"
-    echo "Version: v${AVALANCHEGO_VERSION}"
-    echo "=================================================="
-    echo "Important Next Steps:"
-    echo "1. Monitor bootstrap progress:"
-    echo "   sudo journalctl -u avalanchego -f"
-    echo ""
-    echo "2. Check service status:"
-    echo "   sudo systemctl status avalanchego"
-    echo ""
-    echo "3. Verify node health periodically with:"
-    echo "   curl -X POST --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"health.health\"}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/health"
-    echo "=================================================="
-    echo "Additional Commands:"
-    echo "- Stop node: sudo systemctl stop avalanchego"
-    echo "- Start node: sudo systemctl start avalanchego"
-    echo "- Update node: $0 --update"
-    echo "=================================================="
-    echo "RPC Endpoints (when bootstrapped):"
-    echo "- P-Chain: localhost:9650/ext/bc/P"
-    echo "- X-Chain: localhost:9650/ext/bc/X"
-    echo "- C-Chain: localhost:9650/ext/bc/C/rpc"
-    echo "=================================================="
 }
 
 main "$@" 
