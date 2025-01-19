@@ -365,8 +365,26 @@ display_node_info() {
     
     print_message "\nNode Installation Complete!" "$GREEN"
     print_message "\nImportant Node Information:" "$YELLOW"
+    
     echo -e "\n1. Node ID:"
-    echo "   $(journalctl -u avalanchego | grep "NodeID-" | tail -n 1 | awk -F'NodeID-' '{print "NodeID-"$2}')"
+    # Wait for NodeID to appear in logs (up to 30 seconds)
+    local retries=0
+    local nodeid=""
+    while [ $retries -lt 30 ]; do
+        nodeid=$(journalctl -u avalanchego -n 100 --no-pager | grep -o "NodeID-[A-Za-z0-9]*" | tail -n 1)
+        if [ ! -z "$nodeid" ]; then
+            break
+        fi
+        sleep 1
+        retries=$((retries + 1))
+    done
+    
+    if [ ! -z "$nodeid" ]; then
+        echo "   $nodeid"
+    else
+        echo "   Waiting for NodeID... (check logs with: journalctl -u avalanchego -f)"
+        echo "   Note: NodeID will appear in logs once the node starts"
+    fi
     
     echo -e "\n2. Node Status:"
     echo "   Current status: $(systemctl is-active avalanchego)"
