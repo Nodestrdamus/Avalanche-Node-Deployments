@@ -19,11 +19,16 @@ NETWORK_ID=""
 HOME_DIR="$HOME/.avalanchego"
 UPDATE_MODE=false
 NODE_TYPE=""
+IP_TYPE=""
 
 # Node type constants
 VALIDATOR_NODE="validator"
 HISTORICAL_NODE="historical"
 API_NODE="api"
+
+# IP type constants
+RESIDENTIAL_IP="residential"
+STATIC_IP="static"
 
 print_banner() {
     echo "=================================================="
@@ -307,7 +312,7 @@ generate_config() {
     # Base configuration common to all node types
     local base_config='{
         "network-id": "'${NETWORK_ID}'",
-        "http-host": "",
+        "http-host": "127.0.0.1",
         "http-port": 9650,
         "staking-port": 9651,
         "db-dir": "'${HOME_DIR}'/db",
@@ -328,6 +333,14 @@ generate_config() {
     # Node type specific configurations
     case $NODE_TYPE in
         $VALIDATOR_NODE)
+            # For validator nodes, configure based on IP type
+            local dynamic_nat_config=""
+            if [ "$IP_TYPE" = "$RESIDENTIAL_IP" ]; then
+                dynamic_nat_config=',
+                    "dynamic-public-ip": "opendns",
+                    "dynamic-update-duration": "5m"'
+            fi
+            
             local node_config="$base_config,
                 \"snow-sample-size\": 20,
                 \"snow-quorum-size\": 15,
@@ -337,7 +350,8 @@ generate_config() {
                 \"api-admin-enabled\": false,
                 \"api-ipcs-enabled\": false,
                 \"index-enabled\": false,
-                \"pruning-enabled\": true
+                \"pruning-enabled\": true,
+                \"state-sync-enabled\": true${dynamic_nat_config}
             }"
             ;;
         $HISTORICAL_NODE)
@@ -444,7 +458,10 @@ start_node() {
     # Check if node is running
     if systemctl is-active --quiet avalanchego; then
         echo "✓ Node started successfully"
-        print_step "Checking initial bootstrap status..."
+        print_step "Initial Bootstrap Status Check"
+        echo "Note: Chains will show as 'still bootstrapping' until the process completes"
+        echo "This is normal and may take several days"
+        echo ""
         check_bootstrap_status "P"
         check_bootstrap_status "X"
         check_bootstrap_status "C"
@@ -453,25 +470,36 @@ start_node() {
         sleep 2
         NODE_ID=$(curl -s -X POST --data '{"jsonrpc": "2.0","method":"info.getNodeID","params":{},"id":1}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info | jq -r '.result.nodeID')
         
-        print_step "Node Information and Monitoring Instructions"
+        print_step "Node Information and Next Steps"
         echo "=================================================="
-        echo "Bootstrap process has started. This may take several days to complete."
-        echo ""
-        echo "To monitor the bootstrap progress in real-time:"
-        echo "  sudo journalctl -u avalanchego -f"
-        echo "This will show you detailed logs of the bootstrapping process."
-        echo ""
-        echo "To check the service status:"
-        echo "  sudo systemctl status avalanchego"
-        echo "This will show you the current state of your node service."
+        echo "Your node has started and is now bootstrapping!"
+        echo "This process will take several days to complete."
         echo ""
         if [ ! -z "$NODE_ID" ]; then
             echo "Your NodeID: $NODE_ID"
-            echo "You can track your node's progress at:"
-            echo "https://avascan.info/staking/validator/$NODE_ID"
-        else
-            echo "NodeID will be available once the node starts responding to API calls"
+            if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
+                echo "Track your validator's progress at:"
+                echo "https://avascan.info/staking/validator/$NODE_ID"
+                echo ""
+            fi
         fi
+        echo "IMPORTANT: Monitor your node's progress using:"
+        echo "------------------------------------------------"
+        echo "1. View real-time logs (recommended):"
+        echo "   sudo journalctl -u avalanchego -f"
+        echo ""
+        echo "2. Check service status:"
+        echo "   sudo systemctl status avalanchego"
+        echo ""
+        echo "3. Check bootstrap progress:"
+        echo "   curl -X POST --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"info.isBootstrapped\",\"params\":{\"chain\":\"P\"}}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info"
+        echo "   (Replace P with X or C for other chains)"
+        echo ""
+        echo "4. Monitor system resources:"
+        echo "   htop"
+        echo "=================================================="
+        echo "Your node is now running! Please save your NodeID."
+        echo "Follow the monitoring instructions above to track progress."
         echo "=================================================="
     else
         print_error "Failed to start node. Check logs with: sudo journalctl -u avalanchego -f"
@@ -509,6 +537,22 @@ main() {
             *) echo "Invalid choice. Please enter 1, 2, or 3.";;
         esac
     done
+    
+    # For validator nodes, ask about IP type
+    if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
+        print_step "Select IP type:"
+        echo "1) Residential IP (Dynamic)"
+        echo "2) Static IP"
+        
+        while true; do
+            read -p "Enter your choice [1-2]: " choice
+            case $choice in
+                1) IP_TYPE=$RESIDENTIAL_IP; break;;
+                2) IP_TYPE=$STATIC_IP; break;;
+                *) echo "Invalid choice. Please enter 1 or 2.";;
+            esac
+        done
+    fi
     
     # Set up network ID
     print_step "Select network:"
