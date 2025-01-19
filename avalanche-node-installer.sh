@@ -77,18 +77,24 @@ check_requirements() {
 install_dependencies() {
     print_step "Installing dependencies..."
     
-    # Update package list
-    sudo apt-get update
+    # Check for gcc
+    if ! command -v gcc &> /dev/null; then
+        print_step "Installing gcc and build tools..."
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+    else
+        echo "✓ gcc already installed: $(gcc --version | head -n1)"
+    fi
     
     # Install required packages
+    print_step "Installing additional dependencies..."
+    sudo apt-get update
     sudo apt-get install -y \
         git \
         curl \
-        build-essential \
         pkg-config \
         libssl-dev \
         libuv1-dev \
-        gcc \
         make \
         tar \
         wget \
@@ -203,21 +209,87 @@ setup_avalanchego() {
 generate_staking_keys() {
     if [ ! -f "$HOME_DIR/staking/staker.key" ]; then
         print_step "Generating staking keys..."
+        echo "Staking directory: $HOME_DIR/staking"
+        echo "Using AvalancheGo binary: $AVALANCHEGO_PATH/build/avalanchego"
         
-        "$AVALANCHEGO_PATH/build/avalanchego" \
+        # Create staking directory with correct permissions
+        if [ ! -d "$HOME_DIR/staking" ]; then
+            mkdir -p "$HOME_DIR/staking"
+            echo "Created staking directory: $HOME_DIR/staking"
+        fi
+        
+        # Ensure directory permissions and ownership
+        sudo chown -R $USER:$USER "$HOME_DIR/staking"
+        chmod 700 "$HOME_DIR/staking"
+        echo "✓ Set staking directory permissions to 700 (owner access only)"
+        echo "✓ Set staking directory ownership to $USER:$USER"
+        
+        # Log the command being executed
+        echo "Executing command:"
+        echo "$AVALANCHEGO_PATH/build/avalanchego --staking-tls-cert-file=\"$HOME_DIR/staking/staker.crt\" --staking-tls-key-file=\"$HOME_DIR/staking/staker.key\""
+        
+        # Run the command and capture output
+        local output
+        output=$("$AVALANCHEGO_PATH/build/avalanchego" \
             --staking-tls-cert-file="$HOME_DIR/staking/staker.crt" \
-            --staking-tls-key-file="$HOME_DIR/staking/staker.key" || true
+            --staking-tls-key-file="$HOME_DIR/staking/staker.key" 2>&1) || true
         
+        # Check if files were created
         if [ -f "$HOME_DIR/staking/staker.key" ] && [ -f "$HOME_DIR/staking/staker.crt" ]; then
+            # Set ownership and permissions
+            sudo chown $USER:$USER "$HOME_DIR/staking/staker.key" "$HOME_DIR/staking/staker.crt"
             chmod 600 "$HOME_DIR/staking/staker.key"
             chmod 600 "$HOME_DIR/staking/staker.crt"
-            echo "✓ Staking keys generated successfully"
+            
+            # Verify permissions were set correctly
+            local key_perms=$(stat -c "%a" "$HOME_DIR/staking/staker.key")
+            local cert_perms=$(stat -c "%a" "$HOME_DIR/staking/staker.crt")
+            local key_owner=$(stat -c "%U:%G" "$HOME_DIR/staking/staker.key")
+            local cert_owner=$(stat -c "%U:%G" "$HOME_DIR/staking/staker.crt")
+            
+            if [ "$key_perms" = "600" ] && [ "$cert_perms" = "600" ] && \
+               [ "$key_owner" = "$USER:$USER" ] && [ "$cert_owner" = "$USER:$USER" ]; then
+                echo "✓ Staking keys generated successfully"
+                echo "✓ Key file: $HOME_DIR/staking/staker.key"
+                echo "✓ Certificate file: $HOME_DIR/staking/staker.crt"
+                echo "✓ Permissions set to 600 (read/write for owner only)"
+                echo "✓ Ownership set to $USER:$USER"
+            else
+                print_error "Failed to set correct permissions/ownership"
+                exit 1
+            fi
         else
             print_error "Failed to generate staking keys"
+            echo "Command output:"
+            echo "$output"
+            echo "Please check the following:"
+            echo "1. AvalancheGo binary exists and is executable"
+            echo "2. Staking directory is writable"
+            echo "3. Sufficient permissions to create files"
             exit 1
         fi
     else
-        print_warning "Staking keys already exist, skipping generation"
+        print_warning "Staking keys already exist, checking permissions..."
+        echo "Existing key location: $HOME_DIR/staking/staker.key"
+        echo "Existing cert location: $HOME_DIR/staking/staker.crt"
+        
+        # Verify and fix permissions and ownership
+        local key_perms=$(stat -c "%a" "$HOME_DIR/staking/staker.key")
+        local cert_perms=$(stat -c "%a" "$HOME_DIR/staking/staker.crt")
+        local key_owner=$(stat -c "%U:%G" "$HOME_DIR/staking/staker.key")
+        local cert_owner=$(stat -c "%U:%G" "$HOME_DIR/staking/staker.crt")
+        
+        if [ "$key_perms" != "600" ] || [ "$cert_perms" != "600" ] || \
+           [ "$key_owner" != "$USER:$USER" ] || [ "$cert_owner" != "$USER:$USER" ]; then
+            print_warning "Fixing staking key permissions and ownership..."
+            sudo chown $USER:$USER "$HOME_DIR/staking/staker.key" "$HOME_DIR/staking/staker.crt"
+            chmod 600 "$HOME_DIR/staking/staker.key"
+            chmod 600 "$HOME_DIR/staking/staker.crt"
+            echo "✓ Permissions corrected to 600"
+            echo "✓ Ownership set to $USER:$USER"
+        else
+            echo "✓ Existing keys have correct permissions (600) and ownership ($USER:$USER)"
+        fi
     fi
 }
 
