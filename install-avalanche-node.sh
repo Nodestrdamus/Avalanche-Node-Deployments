@@ -469,10 +469,19 @@ install_node() {
     
     # 4. Configure node
     print_message "\n=== Phase 4: Node Configuration ===" "$YELLOW"
-    print_message "\nPlease select your network type:" "$GREEN"
+    
+    print_message "\n=== Network Selection ===" "$GREEN"
+    print_message "Choose your network type:" "$YELLOW"
+    echo -e "Option 1: Mainnet - Production Avalanche network"
+    echo -e "Option 2: Fuji   - Test network for development"
+    echo -e "\nThis choice determines which Avalanche network your node will connect to."
     network_id=$(select_network)
     
-    print_message "\nPlease select your network environment:" "$GREEN"
+    print_message "\n=== Network Environment ===" "$GREEN"
+    print_message "Choose your network environment:" "$YELLOW"
+    echo -e "Option 1: Residential  - For home/dynamic IP setups"
+    echo -e "Option 2: Datacenter   - For static IP deployments"
+    echo -e "\nThis choice configures your node's network settings appropriately."
     network_env=$(select_network_environment)
     
     print_message "\nConfiguring node with selected options..." "$YELLOW"
