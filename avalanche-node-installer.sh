@@ -440,9 +440,48 @@ EOL
 generate_staking_keys() {
     print_step "Generating staking keys..."
     
-    "$HOME/avalanchego/build/avalanchego" \
-        --staking-tls-cert-file="${HOME_DIR}/staking/staker.crt" \
-        --staking-tls-key-file="${HOME_DIR}/staking/staker.key"
+    # Ensure the staking directory exists with correct permissions
+    mkdir -p "${HOME_DIR}/staking"
+    chmod 700 "${HOME_DIR}/staking"
+    
+    # Generate the staking keys
+    if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
+        cd "$HOME/avalanchego"
+        ./build/avalanchego \
+            --staking-tls-cert-file="${HOME_DIR}/staking/staker.crt" \
+            --staking-tls-key-file="${HOME_DIR}/staking/staker.key" \
+            --staking-enabled=true \
+            --network-id="local" \
+            --db-dir="${HOME_DIR}/db-temp" \
+            --log-level="OFF" \
+            --http-port=9650 \
+            --staking-port=9651 \
+            --bootstrap-ips="" \
+            --bootstrap-ids="" &
+
+        # Wait a moment for the keys to be generated
+        sleep 5
+        
+        # Kill the temporary node
+        pkill -f avalanchego
+        
+        # Clean up temporary directory
+        rm -rf "${HOME_DIR}/db-temp"
+        
+        # Verify the keys were generated
+        if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
+            print_error "Failed to generate staking keys"
+            exit 1
+        fi
+        
+        # Set correct permissions
+        chmod 600 "${HOME_DIR}/staking/staker.key"
+        chmod 644 "${HOME_DIR}/staking/staker.crt"
+        
+        echo "✓ Staking keys generated successfully"
+    else
+        echo "✓ Staking keys already exist"
+    fi
 }
 
 configure_firewall() {
