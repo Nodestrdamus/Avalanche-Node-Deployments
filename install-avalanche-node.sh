@@ -363,100 +363,59 @@ display_node_info() {
     local node_type=$1
     local network_id=$2
     
-    print_message "\nNode Installation Complete!" "$GREEN"
-    print_message "\nImportant Node Information:" "$YELLOW"
+    print_message "\n=== Node Installation Complete! ===" "$GREEN"
     
-    echo -e "\n1. Node ID:"
+    print_message "\nNode ID:" "$YELLOW"
     # Wait for NodeID to appear in logs (up to 30 seconds)
     local retries=0
     local nodeid=""
+    print_message "Waiting for NodeID to appear (this may take a few seconds)..." "$YELLOW"
     while [ $retries -lt 30 ]; do
         nodeid=$(journalctl -u avalanchego -n 100 --no-pager | grep -o "NodeID-[A-Za-z0-9]*" | tail -n 1)
         if [ ! -z "$nodeid" ]; then
+            print_message "Your Node ID is: $nodeid" "$GREEN"
             break
         fi
         sleep 1
         retries=$((retries + 1))
     done
     
-    if [ ! -z "$nodeid" ]; then
-        echo "   $nodeid"
-    else
-        echo "   Waiting for NodeID... (check logs with: journalctl -u avalanchego -f)"
-        echo "   Note: NodeID will appear in logs once the node starts"
+    if [ -z "$nodeid" ]; then
+        print_message "\nNodeID not yet available. Follow these steps to get your NodeID:" "$YELLOW"
+        echo "1. Wait a few moments for the node to fully start"
+        echo "2. Run this command to check the logs:"
+        echo "   sudo journalctl -u avalanchego -f"
+        echo "3. Look for a line containing 'NodeID-'"
     fi
     
-    echo -e "\n2. Node Status:"
-    echo "   Current status: $(systemctl is-active avalanchego)"
+    print_message "\n=== Node Management Commands ===" "$YELLOW"
+    echo -e "\n1. Start/Stop/Restart Node:"
+    echo "   sudo systemctl start avalanchego    # Start the node"
+    echo "   sudo systemctl stop avalanchego     # Stop the node"
+    echo "   sudo systemctl restart avalanchego  # Restart the node"
     
-    echo -e "\n3. Bootstrap Status:"
-    echo "   Checking bootstrap progress for P-Chain, X-Chain, and C-Chain..."
-    for chain in "P" "X" "C"; do
-        bootstrap_status=$(curl -s -X POST --data '{
-            "jsonrpc":"2.0",
-            "id"     :1,
-            "method" :"info.isBootstrapped",
-            "params": {
-                "chain":"'"$chain"'"
-            }
-        }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info | grep -o 'true\|false')
-        echo "   $chain-Chain: ${bootstrap_status:-Checking...}"
-    done
+    echo -e "\n2. Check Node Status:"
+    echo "   sudo systemctl status avalanchego   # View service status"
     
-    print_message "\nUseful Commands:" "$YELLOW"
-    echo -e "\n1. Service Management:"
-    echo "   Start node:   sudo systemctl start avalanchego"
-    echo "   Stop node:    sudo systemctl stop avalanchego"
-    echo "   Restart node: sudo systemctl restart avalanchego"
-    echo "   View status:  sudo systemctl status avalanchego"
+    echo -e "\n3. View Node Logs:"
+    echo "   sudo journalctl -u avalanchego -f   # Follow logs in real-time"
+    echo "   sudo journalctl -u avalanchego -n 100 # View last 100 log lines"
     
-    echo -e "\n2. Log Monitoring:"
-    echo "   View logs:    sudo journalctl -u avalanchego -f"
-    
-    echo -e "\n3. Configuration:"
-    echo "   Config file:  $CONFIG_FILE"
-    echo "   Data dir:     $CHAIN_DATA_DIR"
-    
-    echo -e "\n4. Bootstrap Progress:"
-    echo "   Check status: curl -X POST --data '{
-        \"jsonrpc\":\"2.0\",
-        \"id\"     :1,
-        \"method\" :\"info.isBootstrapped\",
-        \"params\": {
-            \"chain\":\"X\"
-        }
-    }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info"
+    echo -e "\n4. Configuration Location:"
+    echo "   Config file: $CONFIG_FILE"
     
     if [ "$node_type" = "validator" ]; then
-        echo -e "\n5. Validator Info:"
-        echo "   - Your NodeID is required for staking"
-        echo "   - Ensure node is fully bootstrapped before staking"
-        echo "   - Keep your node running and maintain good network connectivity"
+        print_message "\n=== Validator Node Information ===" "$YELLOW"
+        echo "1. Save your NodeID - You'll need it for staking"
+        echo "2. Ensure your node is running: sudo systemctl status avalanchego"
+        echo "3. Monitor logs until fully bootstrapped: sudo journalctl -u avalanchego -f"
+        echo "4. Visit https://wallet.avax.network/ to stake your AVAX"
     fi
-    
-    print_message "\nNext Steps:" "$GREEN"
-    case $node_type in
-        "validator")
-            echo "1. Wait for node to finish bootstrapping"
-            echo "2. Visit https://wallet.avax.network/ to stake your AVAX"
-            echo "3. Use your NodeID when adding a validator"
-            ;;
-        "api")
-            echo "1. Wait for node to finish bootstrapping"
-            echo "2. API endpoints will be available at: http://localhost:9650"
-            echo "3. Monitor your node's performance and resource usage"
-            ;;
-        "historical")
-            echo "1. Wait for node to finish bootstrapping and indexing"
-            echo "2. Monitor disk usage as the node accumulates historical data"
-            echo "3. Use API endpoints to query historical transactions"
-            ;;
-    esac
     
     print_message "\nNeed help? Check the documentation at https://docs.avax.network/" "$YELLOW"
     
     # Prompt to save information
-    echo -e "\nWould you like to save this information to a file? [y/n]"
+    echo -e "\nWould you like to save these instructions to a file? [y/n]"
     read -r save_info
     if [[ $save_info == "y" || $save_info == "Y" ]]; then
         local info_file="$HOME_DIR/node-info-$(date +%Y%m%d_%H%M%S).txt"
