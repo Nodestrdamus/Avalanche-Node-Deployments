@@ -299,12 +299,14 @@ get_state_sync() {
         echo "State sync bootstrapping automatically enabled for validator node"
     elif [ "$NODE_TYPE" != "historical" ]; then
         print_step "State sync configuration:"
-        read -p "Do you want state sync bootstrapping to be turned on or off? [on/off]: " state_sync
-        if [[ $state_sync == "on" ]]; then
-            STATE_SYNC_ENABLED=true
-        else
-            STATE_SYNC_ENABLED=false
-        fi
+        while true; do
+            read -p "Do you want state sync bootstrapping to be turned on or off? [on/off]: " state_sync
+            case $state_sync in
+                on|ON)  STATE_SYNC_ENABLED=true; break;;
+                off|OFF) STATE_SYNC_ENABLED=false; break;;
+                *) echo "Please enter 'on' or 'off'";;
+            esac
+        done
     else
         STATE_SYNC_ENABLED=false
     fi
