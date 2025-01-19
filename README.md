@@ -6,20 +6,20 @@ A unified installer script for deploying and managing Avalanche nodes with diffe
 
 ### Method 1: Direct Download and Execute
 ```bash
-wget https://raw.githubusercontent.com/YOUR_USERNAME/avalanche-node-deployment/main/avalanche-node-installer.sh
+wget https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanche-node-installer.sh
 chmod 755 avalanche-node-installer.sh
 ./avalanche-node-installer.sh
 ```
 
 ### Method 2: Curl and Execute (One-liner)
 ```bash
-curl -L https://raw.githubusercontent.com/YOUR_USERNAME/avalanche-node-deployment/main/avalanche-node-installer.sh | bash
+curl -L https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanche-node-installer.sh | bash
 ```
 
 ### Method 3: Clone Repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/avalanche-node-deployment.git
-cd avalanche-node-deployment
+git clone https://github.com/Nodestrdamus/Avalanche-Node-Deployments.git
+cd Avalanche-Node-Deployments
 chmod 755 avalanche-node-installer.sh
 ./avalanche-node-installer.sh
 ```
@@ -80,7 +80,7 @@ The script automatically manages AvalancheGo versions by:
 
 1. Run the installer:
    ```bash
-   curl -L https://raw.githubusercontent.com/YOUR_USERNAME/avalanche-node-deployment/main/avalanche-node-installer.sh | bash
+   curl -L https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanche-node-installer.sh | bash
    ```
 
 2. Follow the interactive prompts to select:

@@ -121,37 +121,53 @@ check_requirements() {
         exit 1
     fi
 
+    # Initialize requirements check status
+    local requirements_met=true
+
     # Check CPU cores
     CPU_CORES=$(nproc)
     if [ "$CPU_CORES" -lt 8 ]; then
-        print_warning "Your system has less than the recommended 8 CPU cores"
+        requirements_met=false
+        print_warning "Your system has less than the recommended 8 CPU cores (detected: ${CPU_CORES})"
         read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
+    else
+        echo "✓ CPU cores check passed (detected: ${CPU_CORES} cores)"
     fi
 
     # Check RAM
     TOTAL_RAM=$(free -g | awk '/^Mem:/{print $2}')
     if [ "$TOTAL_RAM" -lt 16 ]; then
-        print_warning "Your system has less than the recommended 16GB of RAM"
+        requirements_met=false
+        print_warning "Your system has less than the recommended 16GB of RAM (detected: ${TOTAL_RAM}GB)"
         read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
+    else
+        echo "✓ RAM check passed (detected: ${TOTAL_RAM}GB)"
     fi
 
     # Check disk space
     DISK_SPACE=$(df -BG / | awk '/^\/dev/{print $4}' | tr -d 'G')
     if [ "$DISK_SPACE" -lt 1000 ]; then
-        print_warning "Your system has less than the recommended 1TB of free disk space"
+        requirements_met=false
+        print_warning "Your system has less than the recommended 1TB of free disk space (detected: ${DISK_SPACE}GB)"
         read -p "Do you want to continue anyway? [y/n]: " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             exit 1
         fi
+    else
+        echo "✓ Disk space check passed (detected: ${DISK_SPACE}GB free)"
+    fi
+
+    if [ "$requirements_met" = true ]; then
+        print_step "All system requirements met! Proceeding with installation..."
     fi
 }
 
@@ -254,21 +270,43 @@ get_ip_config() {
 }
 
 get_rpc_config() {
-    print_step "RPC configuration:"
-    read -p "Should RPC port be public (public) or private (private)? [public/private]: " rpc_choice
-    if [[ $rpc_choice == "public" ]]; then
-        print_warning "Making RPC port public without proper firewall rules can expose your node to DDoS attacks!"
-        read -p "Are you sure you want to continue? [y/n]: " -n 1 -r
-        echo
-        RPC_PUBLIC=[[ $REPLY =~ ^[Yy]$ ]]
+    if [ "$NODE_TYPE" == "validator" ]; then
+        # Automatically set to private for validator nodes
+        RPC_PUBLIC=false
+        echo "RPC access automatically set to private for validator node"
+    else
+        print_step "RPC configuration:"
+        read -p "Should RPC port be public (public) or private (private)? [public/private]: " rpc_choice
+        if [[ $rpc_choice == "public" ]]; then
+            print_warning "Making RPC port public without proper firewall rules can expose your node to DDoS attacks!"
+            read -p "Are you sure you want to continue? [y/n]: " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                RPC_PUBLIC=true
+            else
+                RPC_PUBLIC=false
+            fi
+        else
+            RPC_PUBLIC=false
+        fi
     fi
 }
 
 get_state_sync() {
-    if [ "$NODE_TYPE" != "historical" ]; then
+    if [ "$NODE_TYPE" == "validator" ]; then
+        # Automatically enable state sync for validator nodes
+        STATE_SYNC_ENABLED=true
+        echo "State sync bootstrapping automatically enabled for validator node"
+    elif [ "$NODE_TYPE" != "historical" ]; then
         print_step "State sync configuration:"
         read -p "Do you want state sync bootstrapping to be turned on or off? [on/off]: " state_sync
-        STATE_SYNC_ENABLED=[[ $state_sync == "on" ]]
+        if [[ $state_sync == "on" ]]; then
+            STATE_SYNC_ENABLED=true
+        else
+            STATE_SYNC_ENABLED=false
+        fi
+    else
+        STATE_SYNC_ENABLED=false
     fi
 }
 
