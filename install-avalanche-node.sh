@@ -117,7 +117,7 @@ install_dependencies() {
 
 # Install or upgrade AvalancheGo
 install_avalanchego() {
-    print_message "Installing/Upgrading AvalancheGo..." "$YELLOW"
+    print_message "\n=== Installing/Upgrading AvalancheGo ===" "$YELLOW"
     su - "$USER" -c "
         cd $AVALANCHEGO_HOME
         if [ ! -d src ]; then
@@ -133,6 +133,7 @@ install_avalanchego() {
         cp build/avalanchego $BIN_DIR/
         chmod 750 $BIN_DIR/avalanchego
     "
+    print_message "AvalancheGo installation completed successfully!" "$GREEN"
 }
 
 # Select network environment
@@ -452,27 +453,37 @@ install_node() {
     local node_type=$1
     
     # 1. Initial checks
+    print_message "\n=== Phase 1: System Checks ===" "$YELLOW"
     check_root
     check_system_requirements
     
     # 2. Setup system
+    print_message "\n=== Phase 2: System Setup ===" "$YELLOW"
     setup_user
     create_directories
     install_dependencies
     
     # 3. Install AvalancheGo
+    print_message "\n=== Phase 3: AvalancheGo Installation ===" "$YELLOW"
     install_avalanchego
     
     # 4. Configure node
+    print_message "\n=== Phase 4: Node Configuration ===" "$YELLOW"
+    print_message "\nPlease select your network type:" "$GREEN"
     network_id=$(select_network)
+    
+    print_message "\nPlease select your network environment:" "$GREEN"
     network_env=$(select_network_environment)
+    
+    print_message "\nConfiguring node with selected options..." "$YELLOW"
     configure_node "$node_type" "$network_id" "$network_env"
     
     # 5. Setup service and start node
+    print_message "\n=== Phase 5: Service Setup ===" "$YELLOW"
     setup_service "$network_id"
     
     # 6. Display node information
-    print_message "Installation/Upgrade completed successfully!" "$GREEN"
+    print_message "\n=== Phase 6: Installation Complete ===" "$GREEN"
     display_node_info "$node_type" "$network_id"
 }
 
