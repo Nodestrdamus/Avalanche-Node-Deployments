@@ -1,107 +1,105 @@
 # Avalanche Node Deployment Script
 
-This repository contains a single-line installation script for deploying various types of Avalanche nodes. The script supports deploying Validator Nodes, Historical Nodes, API Nodes, and allows for manual configuration.
-
-## Quick Install
-
-You can install an Avalanche node using this one-liner:
-
-```bash
-curl -sSfL https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/install-avalanche.sh | bash
-```
+A comprehensive installation and management script for deploying various types of Avalanche nodes. This script simplifies the process of setting up and managing Validator, Historical, and API nodes on the Avalanche network.
 
 ## Features
 
 - **Multiple Node Types**:
-  - Validator Node (State Sync ON, Private RPC)
-  - Historical Node
-  - API Node
-  - Manual Configuration
+  - Validator Node (with automatic state sync and private RPC)
+  - Historical Node (with full indexing)
+  - API Node (with public endpoints)
+  - Manual Configuration Option
 
-- **Automatic Updates**: Pulls the latest version of AvalancheGo
-- **Backup System**: Automatically backs up existing nodes before upgrades
-- **Systemd Integration**: Runs as a background service
-- **Security Focused**: Validator nodes configured with private RPC by default
+- **Automated Setup**:
+  - Dependency management (gcc, go)
+  - User creation and permission handling
+  - Directory structure setup
+  - Systemd service configuration
+
+- **Management Features**:
+  - One-click installation and upgrades
+  - Backup and restore functionality
+  - Service management
+  - Configuration management
+
+## Prerequisites
+
+- Ubuntu Server 20.04.6 or 24.04.1
+- Root or sudo access
+- Internet connectivity
+
+## Quick Start
+
+```bash
+wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/install-avalanche-node.sh
+chmod 755 install-avalanche-node.sh
+sudo ./install-avalanche-node.sh
+```
 
 ## Node Types and Configurations
 
 ### Validator Node
-- State Sync: Enabled
-- RPC: Private (localhost only)
-- Admin API: Disabled
-- Indexing: Disabled
+- State sync enabled
+- Private RPC (localhost only)
+- Minimal API exposure
+- Optimized for validation
 
 ### Historical Node
-- State Sync: Disabled
-- Pruning: Disabled
-- Admin API: Enabled
-- Indexing: Enabled
+- Full indexing enabled
+- Pruning disabled
+- Complete transaction history
+- API admin enabled
 
 ### API Node
-- State Sync: Enabled
-- RPC: Public
-- Admin API: Enabled
-- Indexing: Enabled
+- Public RPC endpoints
+- All APIs enabled
+- State sync enabled
+- Full indexing
 
-### Manual Configuration
-- Provides basic configuration
-- Allows for custom modifications
+## Usage
 
-## System Requirements
+1. Run the script with sudo privileges
+2. Select your desired node type from the menu
+3. Follow the prompts to complete installation
 
-- Linux-based operating system
-- `curl` or `wget`
-- `systemd`
-- Sufficient disk space (recommended: 200GB+)
-- Minimum 8GB RAM
-
-## Post-Installation
-
-The script will:
-1. Install AvalancheGo in `$HOME/avalanchego`
-2. Create configuration in `$HOME/.avalanchego/configs`
-3. Set up a systemd service
-4. Start the node automatically
+### Menu Options
+1. Install/Upgrade Validator Node
+2. Install/Upgrade Historical Node
+3. Install/Upgrade API Node
+4. Manual Configuration
+5. Backup Node
+6. Restore Node
+7. Exit
 
 ## Maintenance
 
-### Check Node Status
-```bash
-sudo systemctl status avalanchego
-```
+### Backup
+- Automatically stops the service
+- Creates a timestamped backup
+- Restarts the service
+- Stores backups in `/home/avax/avalanche-backup`
 
-### View Logs
-```bash
-sudo journalctl -u avalanchego -f
-```
+### Restore
+- Lists available backups
+- Allows selection of backup file
+- Handles service management during restore
+- Verifies backup integrity
 
-### Restart Node
-```bash
-sudo systemctl restart avalanchego
-```
+## Security Features
 
-### Stop Node
-```bash
-sudo systemctl stop avalanchego
-```
-
-## Backup Location
-
-Backups are stored in `$HOME/avalanche-backup` with timestamps.
-
-## Security Considerations
-
-- For validator nodes, RPC endpoints are private by default
-- Admin API is disabled for validator nodes
-- Backup your node keys and configurations regularly
-- Use appropriate firewall rules
+- Dedicated system user
+- Secure default configurations
+- Private RPC for validator nodes
+- Limited API exposure where appropriate
 
 ## Support
 
-For issues and feature requests, please contact Rise & Shine Management support.
+For support, please contact Rise & Shine Management.
 
 ## License
 
-This software is proprietary and confidential. Copyright (c) 2024 Rise & Shine Management. All Rights Reserved.
+This software is proprietary and confidential. Unauthorized copying, modification, distribution, or use of this software, via any medium, is strictly prohibited. All rights reserved by Rise & Shine Management.
 
-This software is licensed under a proprietary license agreement and may only be used in accordance with the terms of that agreement. Any unauthorized use, reproduction, or distribution is strictly prohibited. 
+## Author
+
+Developed by Nodestrdamus for Rise & Shine Management. 
