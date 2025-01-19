@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Avalanche Node Installation and Configuration Script
-# Author: Nodestrdamus
-# Repository: https://github.com/Nodestrdamus/Avalanche-Node-Deployments
+# Copyright (c) 2024 Rise & Shine Management. All Rights Reserved.
+# This script is proprietary software of Rise & Shine Management.
+# Unauthorized copying, modification, distribution, or use is strictly prohibited.
 
 set -e
 

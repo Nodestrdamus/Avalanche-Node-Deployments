@@ -98,8 +98,10 @@ Backups are stored in `$HOME/avalanche-backup` with timestamps.
 
 ## Support
 
-For issues and feature requests, please open an issue in the GitHub repository.
+For issues and feature requests, please contact Rise & Shine Management support.
 
 ## License
 
-MIT License 
+This software is proprietary and confidential. Copyright (c) 2024 Rise & Shine Management. All Rights Reserved.
+
+This software is licensed under a proprietary license agreement and may only be used in accordance with the terms of that agreement. Any unauthorized use, reproduction, or distribution is strictly prohibited. 
