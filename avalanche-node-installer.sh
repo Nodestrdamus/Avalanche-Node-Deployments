@@ -18,6 +18,12 @@ NC='\033[0m' # No Color
 NETWORK_ID=""
 HOME_DIR="$HOME/.avalanchego"
 UPDATE_MODE=false
+NODE_TYPE=""
+
+# Node type constants
+VALIDATOR_NODE="validator"
+HISTORICAL_NODE="historical"
+API_NODE="api"
 
 print_banner() {
     echo "=================================================="
@@ -265,8 +271,26 @@ setup_avalanchego() {
     ./scripts/build.sh
 
     # Create required directories
-    mkdir -p "$HOME_DIR"/{db,configs,staking}
+    mkdir -p "$HOME_DIR"/{db,configs,staking,logs}
     chmod 700 "$HOME_DIR/staking"
+
+    # Generate staking keys for validator nodes
+    if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
+        if [ ! -f "$HOME_DIR/staking/staker.key" ]; then
+            print_step "Generating staking keys..."
+            "$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego" --staking-tls-cert-file="$HOME_DIR/staking/staker.crt" --staking-tls-key-file="$HOME_DIR/staking/staker.key" || true
+            if [ -f "$HOME_DIR/staking/staker.key" ]; then
+                echo "✓ Staking keys generated successfully"
+                chmod 600 "$HOME_DIR/staking/staker.key"
+                chmod 600 "$HOME_DIR/staking/staker.crt"
+            else
+                print_error "Failed to generate staking keys"
+                exit 1
+            fi
+        else
+            print_warning "Staking keys already exist, skipping generation"
+        fi
+    fi
 
     # Generate config
     generate_config
@@ -280,30 +304,70 @@ generate_config() {
     
     CONFIG_FILE="$HOME_DIR/configs/node.json"
     
-    # Base configuration following Avalanche docs
-    cat > "$CONFIG_FILE" << EOL
-{
-    "network-id": "${NETWORK_ID}",
-    "http-host": "",
-    "http-port": 9650,
-    "staking-port": 9651,
-    "db-dir": "${HOME_DIR}/db",
-    "log-level": "info",
-    "log-display-level": "info",
-    "log-dir": "${HOME_DIR}/logs",
-    "api-admin-enabled": false,
-    "api-ipcs-enabled": false,
-    "index-enabled": false,
-    "api-keystore-enabled": false,
-    "api-metrics-enabled": true,
-    "bootstrap-retry-enabled": true,
-    "bootstrap-retry-warm-up": "5m",
-    "health-check-frequency": "2m",
-    "health-check-averager-halflife": "10s",
-    "network-minimum-timeout": "5s",
-    "network-initial-timeout": "5s"
-}
-EOL
+    # Base configuration common to all node types
+    local base_config='{
+        "network-id": "'${NETWORK_ID}'",
+        "http-host": "",
+        "http-port": 9650,
+        "staking-port": 9651,
+        "db-dir": "'${HOME_DIR}'/db",
+        "log-level": "info",
+        "log-display-level": "info",
+        "log-dir": "'${HOME_DIR}'/logs",
+        "api-admin-enabled": false,
+        "api-ipcs-enabled": false,
+        "api-keystore-enabled": false,
+        "api-metrics-enabled": true,
+        "bootstrap-retry-enabled": true,
+        "bootstrap-retry-warm-up": "5m",
+        "health-check-frequency": "2m",
+        "health-check-averger-halflife": "10s",
+        "network-minimum-timeout": "5s",
+        "network-initial-timeout": "5s"'
+
+    # Node type specific configurations
+    case $NODE_TYPE in
+        $VALIDATOR_NODE)
+            local node_config="$base_config,
+                \"snow-sample-size\": 20,
+                \"snow-quorum-size\": 15,
+                \"staking-enabled\": true,
+                \"staking-tls-cert-file\": \"${HOME_DIR}/staking/staker.crt\",
+                \"staking-tls-key-file\": \"${HOME_DIR}/staking/staker.key\",
+                \"api-admin-enabled\": false,
+                \"api-ipcs-enabled\": false,
+                \"index-enabled\": false,
+                \"pruning-enabled\": true
+            }"
+            ;;
+        $HISTORICAL_NODE)
+            local node_config="$base_config,
+                \"snow-sample-size\": 20,
+                \"snow-quorum-size\": 15,
+                \"staking-enabled\": false,
+                \"api-admin-enabled\": true,
+                \"api-ipcs-enabled\": true,
+                \"index-enabled\": true,
+                \"pruning-enabled\": false,
+                \"state-sync-enabled\": false
+            }"
+            ;;
+        $API_NODE)
+            local node_config="$base_config,
+                \"snow-sample-size\": 20,
+                \"snow-quorum-size\": 15,
+                \"staking-enabled\": false,
+                \"api-admin-enabled\": true,
+                \"api-ipcs-enabled\": false,
+                \"index-enabled\": true,
+                \"pruning-enabled\": true,
+                \"state-sync-enabled\": true
+            }"
+            ;;
+    esac
+
+    echo "$node_config" | jq '.' > "$CONFIG_FILE"
+    echo "✓ Configuration generated for ${NODE_TYPE} node"
 }
 
 setup_systemd_service() {
@@ -337,7 +401,16 @@ configure_firewall() {
     
     sudo ufw allow 22/tcp comment 'SSH'
     sudo ufw allow 9651/tcp comment 'Avalanche P2P'
-    sudo ufw allow 9650/tcp comment 'Avalanche API'
+    
+    case $NODE_TYPE in
+        $VALIDATOR_NODE)
+            # Validator nodes should be more restrictive
+            ;;
+        $HISTORICAL_NODE|$API_NODE)
+            sudo ufw allow 9650/tcp comment 'Avalanche API'
+            ;;
+    esac
+    
     sudo ufw --force enable
 }
 
@@ -375,7 +448,31 @@ start_node() {
         check_bootstrap_status "P"
         check_bootstrap_status "X"
         check_bootstrap_status "C"
-        echo "Note: Full bootstrapping may take several days"
+        
+        # Get NodeID
+        sleep 2
+        NODE_ID=$(curl -s -X POST --data '{"jsonrpc": "2.0","method":"info.getNodeID","params":{},"id":1}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info | jq -r '.result.nodeID')
+        
+        print_step "Node Information and Monitoring Instructions"
+        echo "=================================================="
+        echo "Bootstrap process has started. This may take several days to complete."
+        echo ""
+        echo "To monitor the bootstrap progress in real-time:"
+        echo "  sudo journalctl -u avalanchego -f"
+        echo "This will show you detailed logs of the bootstrapping process."
+        echo ""
+        echo "To check the service status:"
+        echo "  sudo systemctl status avalanchego"
+        echo "This will show you the current state of your node service."
+        echo ""
+        if [ ! -z "$NODE_ID" ]; then
+            echo "Your NodeID: $NODE_ID"
+            echo "You can track your node's progress at:"
+            echo "https://avascan.info/staking/validator/$NODE_ID"
+        else
+            echo "NodeID will be available once the node starts responding to API calls"
+        fi
+        echo "=================================================="
     else
         print_error "Failed to start node. Check logs with: sudo journalctl -u avalanchego -f"
         exit 1
@@ -397,6 +494,22 @@ main() {
     check_requirements
     install_dependencies
     
+    # Select node type
+    print_step "Select node type:"
+    echo "1) Validator Node"
+    echo "2) Historical RPC Node"
+    echo "3) API Node"
+    
+    while true; do
+        read -p "Enter your choice [1-3]: " choice
+        case $choice in
+            1) NODE_TYPE=$VALIDATOR_NODE; break;;
+            2) NODE_TYPE=$HISTORICAL_NODE; break;;
+            3) NODE_TYPE=$API_NODE; break;;
+            *) echo "Invalid choice. Please enter 1, 2, or 3.";;
+        esac
+    done
+    
     # Set up network ID
     print_step "Select network:"
     echo "1) Mainnet"
@@ -417,16 +530,26 @@ main() {
     
     print_step "Installation completed successfully!"
     echo "=================================================="
+    echo "Node Type: $NODE_TYPE"
     echo "Network: $NETWORK_ID"
+    echo "Version: v${AVALANCHEGO_VERSION}"
     echo "=================================================="
-    echo "Useful commands:"
-    echo "- Check node status: sudo systemctl status avalanchego"
-    echo "- View logs: sudo journalctl -u avalanchego -f"
+    echo "Important Next Steps:"
+    echo "1. Monitor bootstrap progress:"
+    echo "   sudo journalctl -u avalanchego -f"
+    echo ""
+    echo "2. Check service status:"
+    echo "   sudo systemctl status avalanchego"
+    echo ""
+    echo "3. Verify node health periodically with:"
+    echo "   curl -X POST --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"health.health\"}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/health"
+    echo "=================================================="
+    echo "Additional Commands:"
     echo "- Stop node: sudo systemctl stop avalanchego"
     echo "- Start node: sudo systemctl start avalanchego"
-    echo "- Check bootstrap status: curl -X POST --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"info.isBootstrapped\",\"params\":{\"chain\":\"X\"}}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info"
+    echo "- Update node: $0 --update"
     echo "=================================================="
-    echo "RPC Endpoints when bootstrapped:"
+    echo "RPC Endpoints (when bootstrapped):"
     echo "- P-Chain: localhost:9650/ext/bc/P"
     echo "- X-Chain: localhost:9650/ext/bc/X"
     echo "- C-Chain: localhost:9650/ext/bc/C/rpc"
