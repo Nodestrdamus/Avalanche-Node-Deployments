@@ -366,26 +366,17 @@ display_node_info() {
     print_message "\n=== Node Installation Complete! ===" "$GREEN"
     
     print_message "\nNode ID:" "$YELLOW"
-    # Wait for NodeID to appear in logs (up to 30 seconds)
-    local retries=0
-    local nodeid=""
-    print_message "Waiting for NodeID to appear (this may take a few seconds)..." "$YELLOW"
-    while [ $retries -lt 30 ]; do
-        nodeid=$(sudo journalctl -u avalanchego | grep "NodeID-" | head -n 1 | awk '{print $NF}')
-        if [ ! -z "$nodeid" ]; then
-            print_message "Your Node ID is: $nodeid" "$GREEN"
-            break
-        fi
-        sleep 1
-        retries=$((retries + 1))
-    done
+    # Give the service a moment to start and write logs
+    sleep 5
     
-    if [ -z "$nodeid" ]; then
-        print_message "\nNodeID not yet available. Follow these steps to get your NodeID:" "$YELLOW"
-        echo "1. Wait a few moments for the node to fully start"
-        echo "2. Run this command to get your NodeID:"
+    # Get NodeID from logs
+    local nodeid=$(sudo journalctl -u avalanchego | grep "NodeID" | head -1 | cut -d ':' -f4 | tr -d ' ')
+    
+    if [ ! -z "$nodeid" ]; then
+        print_message "Your Node ID is: $nodeid" "$GREEN"
+    else
+        print_message "\nTo get your NodeID, run this command:" "$YELLOW"
         echo "   sudo journalctl -u avalanchego | grep \"NodeID\""
-        echo "3. The NodeID will be displayed in the format: NodeID-XXXXXXXX..."
     fi
     
     print_message "\n=== Node Management Commands ===" "$YELLOW"
@@ -399,7 +390,6 @@ display_node_info() {
     
     echo -e "\n3. View Node Logs:"
     echo "   sudo journalctl -u avalanchego -f   # Follow logs in real-time"
-    echo "   sudo journalctl -u avalanchego | grep \"NodeID\"  # Find your NodeID"
     
     if [ "$node_type" = "validator" ]; then
         print_message "\n=== Validator Node Information ===" "$YELLOW"
