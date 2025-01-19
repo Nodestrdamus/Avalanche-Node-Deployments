@@ -13,14 +13,17 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Default values
-GOVERSION="1.22.8"  # Updated to latest recommended version
+GOVERSION="1.22.8"
 USER="avax"
 HOME_DIR="/home/$USER"
-AVALANCHE_DIR="$HOME_DIR/.avalanchego"
-CONFIG_DIR="$AVALANCHE_DIR/configs"
+AVALANCHEGO_HOME="$HOME_DIR/AvalancheGo"
+AVALANCHE_DATA_DIR="$AVALANCHEGO_HOME/.avalanchego"
+CONFIG_DIR="$AVALANCHE_DATA_DIR/configs"
 CONFIG_FILE="$CONFIG_DIR/node.json"
-BACKUP_DIR="$HOME_DIR/avalanche-backup"
-CHAIN_DATA_DIR="$AVALANCHE_DIR/db"
+CHAIN_DATA_DIR="$AVALANCHE_DATA_DIR/db"
+BACKUP_DIR="$AVALANCHEGO_HOME/backups"
+LOG_DIR="$AVALANCHEGO_HOME/logs"
+BIN_DIR="$AVALANCHEGO_HOME/bin"
 MIN_CPU_CORES=8
 MIN_RAM_GB=16
 MIN_STORAGE_GB=1024
@@ -28,6 +31,37 @@ MIN_STORAGE_GB=1024
 # Function to print colored output
 print_message() {
     echo -e "${2}${1}${NC}"
+}
+
+# Create directory structure
+create_directories() {
+    print_message "Creating directory structure..." "$YELLOW"
+    
+    # Create main directories
+    mkdir -p "$AVALANCHEGO_HOME"
+    mkdir -p "$AVALANCHE_DATA_DIR"
+    mkdir -p "$CONFIG_DIR/chains"
+    mkdir -p "$CHAIN_DATA_DIR"
+    mkdir -p "$BACKUP_DIR"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$BIN_DIR"
+    
+    # Set permissions
+    chown -R "$USER:$USER" "$HOME_DIR"
+    chmod 750 "$AVALANCHEGO_HOME"
+    chmod 750 "$AVALANCHE_DATA_DIR"
+    chmod 750 "$CONFIG_DIR"
+    chmod 750 "$BACKUP_DIR"
+    chmod 750 "$LOG_DIR"
+    chmod 750 "$BIN_DIR"
+}
+
+# Check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        print_message "Please run as root (sudo)" "$RED"
+        exit 1
+    fi
 }
 
 # Check system requirements
@@ -53,11 +87,12 @@ check_system_requirements() {
     fi
 }
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_message "Please run as root (sudo)" "$RED"
-        exit 1
+# Create avalanche user
+setup_user() {
+    print_message "Setting up Avalanche user..." "$YELLOW"
+    if ! id "$USER" &>/dev/null; then
+        useradd -m -s /bin/bash "$USER"
+        print_message "Created user: $USER" "$GREEN"
     fi
 }
 
@@ -66,11 +101,6 @@ install_dependencies() {
     print_message "Checking and installing dependencies..." "$YELLOW"
     apt-get update
     apt-get install -y git curl build-essential gcc g++ make
-
-    # Install/upgrade gcc
-    if ! command -v gcc &> /dev/null; then
-        apt-get install -y gcc
-    fi
 
     # Install/upgrade Go
     if ! command -v go &> /dev/null || [[ $(go version | awk '{print $3}' | sed 's/go//') != $GOVERSION ]]; then
@@ -85,31 +115,23 @@ install_dependencies() {
     fi
 }
 
-# Create avalanche user and directories
-setup_user() {
-    if ! id "$USER" &>/dev/null; then
-        useradd -m -s /bin/bash "$USER"
-    fi
-    
-    mkdir -p "$CONFIG_DIR"
-    mkdir -p "$BACKUP_DIR"
-    mkdir -p "$CHAIN_DATA_DIR"
-    chown -R "$USER:$USER" "$HOME_DIR"
-}
-
 # Install or upgrade AvalancheGo
 install_avalanchego() {
     print_message "Installing/Upgrading AvalancheGo..." "$YELLOW"
     su - "$USER" -c "
-        cd $HOME_DIR
-        if [ ! -d avalanchego ]; then
+        cd $AVALANCHEGO_HOME
+        if [ ! -d src ]; then
+            mkdir -p src
+            cd src
             git clone https://github.com/ava-labs/avalanchego.git
         fi
-        cd avalanchego
+        cd src/avalanchego
         git fetch
         git checkout master
         git pull
         ./scripts/build.sh
+        cp build/avalanchego $BIN_DIR/
+        chmod 750 $BIN_DIR/avalanchego
     "
 }
 
@@ -249,8 +271,10 @@ Type=simple
 User=$USER
 Restart=always
 RestartSec=1
-ExecStart=$HOME_DIR/avalanchego/build/avalanchego --config-file=$CONFIG_FILE
+ExecStart=$BIN_DIR/avalanchego --config-file=$CONFIG_FILE
 LimitNOFILE=32768
+StandardOutput=append:$LOG_DIR/avalanchego.log
+StandardError=append:$LOG_DIR/avalanchego.error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -278,9 +302,9 @@ restore_node() {
 
     if [ -f "$BACKUP_DIR/$backup_file" ]; then
         systemctl stop avalanchego
-        rm -rf "$AVALANCHE_DIR"
+        rm -rf "$AVALANCHE_DATA_DIR"
         tar -xzf "$BACKUP_DIR/$backup_file" -C "$HOME_DIR"
-        chown -R "$USER:$USER" "$AVALANCHE_DIR"
+        chown -R "$USER:$USER" "$AVALANCHE_DATA_DIR"
         systemctl start avalanchego
         print_message "Restore completed" "$GREEN"
     else
@@ -423,6 +447,35 @@ display_node_info() {
     fi
 }
 
+# Main installation function
+install_node() {
+    local node_type=$1
+    
+    # 1. Initial checks
+    check_root
+    check_system_requirements
+    
+    # 2. Setup system
+    setup_user
+    create_directories
+    install_dependencies
+    
+    # 3. Install AvalancheGo
+    install_avalanchego
+    
+    # 4. Configure node
+    network_id=$(select_network)
+    network_env=$(select_network_environment)
+    configure_node "$node_type" "$network_id" "$network_env"
+    
+    # 5. Setup service and start node
+    setup_service "$network_id"
+    
+    # 6. Display node information
+    print_message "Installation/Upgrade completed successfully!" "$GREEN"
+    display_node_info "$node_type" "$network_id"
+}
+
 # Main menu
 main_menu() {
     while true; do
@@ -439,30 +492,15 @@ main_menu() {
         read -p "Select an option: " choice
 
         case $choice in
-            1|2|3)
-                check_root
-                check_system_requirements
-                install_dependencies
-                setup_user
-                install_avalanchego
-                network_id=$(select_network)
-                network_env=$(select_network_environment)
-                local node_type
-                case $choice in
-                    1) node_type="validator";;
-                    2) node_type="historical";;
-                    3) node_type="api";;
-                esac
-                configure_node "$node_type" "$network_id" "$network_env"
-                setup_service "$network_id"
-                print_message "Installation/Upgrade completed successfully!" "$GREEN"
-                display_node_info "$node_type" "$network_id"
-                ;;
+            1) install_node "validator";;
+            2) install_node "historical";;
+            3) install_node "api";;
             4)
                 check_root
                 check_system_requirements
-                install_dependencies
                 setup_user
+                create_directories
+                install_dependencies
                 install_avalanchego
                 print_message "Manual installation completed. Please configure node.json manually." "$YELLOW"
                 ;;
