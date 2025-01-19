@@ -1,34 +1,34 @@
-# Avalanche Node Deployment Scripts
+# Avalanche Node Deployment Script
 
-A comprehensive toolset for deploying and managing Avalanche nodes with support for multiple node types and automated updates.
+A comprehensive installation script for deploying Avalanche nodes with support for multiple node types and configurations.
 
 ## Features
 
 - **Multiple Node Types**:
-  - Validator Node (for network validation)
-  - Historical RPC Node (for full historical data)
-  - API Node (for general RPC functionality)
+  - **Validator Node**: For network validation with staking capabilities
+  - **Historical Node**: Full archive node with complete historical data
+  - **API Node**: General purpose RPC node with API access
+
 - **Network Support**:
   - Mainnet
   - Fuji (Testnet)
-- **Automated Installation**:
-  - One-command installation process
-  - Automatic dependency management
+
+- **Automatic Configuration**:
+  - Dynamic/Static IP configuration for validators
+  - Public/Private RPC access control
+  - Secure firewall setup
   - Systemd service configuration
+
 - **Security Features**:
-  - Automatic firewall configuration
-  - Secure staking key generation
-  - Proper permission management
-- **Update Management**:
-  - In-place upgrades
-  - Automatic backup before updates
-  - Rollback capability
-  - Version management
+  - Automatic staking key backup and restoration
+  - Secure permission management
+  - Restrictive firewall rules
+  - Private RPC by default
 
 ## System Requirements
 
 - **Operating System**: Ubuntu 20.04 or 24.04 LTS
-- **Minimum Hardware**:
+- **Hardware**:
   - CPU: 8 cores / 16 threads
   - RAM: 16 GB
   - Storage: 1 TB SSD (recommended)
@@ -36,13 +36,12 @@ A comprehensive toolset for deploying and managing Avalanche nodes with support 
 
 ## Quick Start
 
-1. Clone the repository:
+1. Download the script:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/avalanche-node-deployment.git
-   cd avalanche-node-deployment
+   wget https://raw.githubusercontent.com/YOUR_USERNAME/avalanche-node-deployment/main/avalanche-node-installer.sh
    ```
 
-2. Make the script executable:
+2. Make it executable:
    ```bash
    chmod +x avalanche-node-installer.sh
    ```
@@ -52,190 +51,173 @@ A comprehensive toolset for deploying and managing Avalanche nodes with support 
    ./avalanche-node-installer.sh
    ```
 
+## Installation Process
+
+The script will guide you through the following steps:
+
+1. **Node Type Selection**:
+   - Validator Node
+   - Historical RPC Node
+   - API Node
+
+2. **Network Selection**:
+   - Mainnet
+   - Fuji (Testnet)
+
+3. **IP Configuration** (for Validator nodes):
+   - Residential IP (Dynamic)
+   - Static IP
+
+4. **RPC Access Configuration**:
+   - Private (recommended for validators)
+   - Public (for API/Historical nodes)
+
 ## Node Types
 
-### 1. Validator Node
+### Validator Node
 - Participates in network consensus
 - Requires staking
-- More restrictive security settings
-- Pruning enabled for optimal performance
-- Configuration optimized for validation
+- Private RPC by default
+- Automatic staking key management
+- Dynamic IP support for residential connections
 
-### 2. Historical RPC Node
-- Maintains full historical data
-- No staking required
-- API and IPCS enabled
+### Historical Node
+- Maintains complete historical data
+- Public RPC enabled
 - Pruning disabled
 - State sync disabled
-- Ideal for historical data queries
+- Full indexing enabled
 
-### 3. API Node
-- General RPC functionality
-- No staking required
-- API enabled
+### API Node
+- General purpose RPC functionality
+- Public RPC enabled
 - Pruning enabled
 - State sync enabled
 - Optimized for API requests
 
-## Installation Process
-
-1. **System Check**:
-   - Verifies Ubuntu version
-   - Checks if not running as root
-   - Validates system requirements
-
-2. **Dependency Installation**:
-   - Go ${GOVERSION}
-   - Build tools
-   - Required packages
-   - Firewall setup
-
-3. **Node Configuration**:
-   - Network selection (Mainnet/Fuji)
-   - Node type selection
-   - Directory structure creation
-   - Configuration file generation
-
-4. **Service Setup**:
-   - Systemd service configuration
-   - Automatic startup
-   - Service management commands
-
-## Update Management
-
-The script includes a robust update management system:
-
-1. **Check for Updates**:
-   ```bash
-   ./avalanche-node-installer.sh --update
-   ```
-
-2. **Update Process**:
-   - Automatic version detection
-   - Backup creation
-   - In-place upgrade
-   - Configuration preservation
-   - Service restart
-
-3. **Rollback Capability**:
-   - Automatic rollback on failure
-   - Configuration restoration
-   - Version control
-
 ## Configuration
 
-Node configurations are automatically generated based on node type. Key configurations:
+The script automatically generates appropriate configurations based on node type:
 
 ```json
 {
     "network-id": "<network>",
-    "http-host": "",
+    "http-host": "<based on RPC access>",
     "http-port": 9650,
     "staking-port": 9651,
     "db-dir": "<path>/db",
     "log-level": "info",
-    "api-admin-enabled": false,
-    "api-metrics-enabled": true
     // Additional type-specific settings
 }
 ```
 
-## Firewall Configuration
+## Security
 
-The script automatically configures UFW:
-- SSH (22/tcp)
-- P2P Communication (9651/tcp)
-- API Access (9650/tcp) - for Historical and API nodes
+1. **Firewall Configuration**:
+   - SSH (22/tcp)
+   - P2P Communication (9651/tcp)
+   - API Access (9650/tcp) - only if RPC is public
 
-## Monitoring and Management
+2. **Staking Keys** (Validator nodes):
+   - Automatic backup during upgrades
+   - Secure permissions (600)
+   - Protected storage location
 
-### Service Management
+3. **RPC Access**:
+   - Private by default for validators
+   - Warning when enabling public access
+   - Configurable per node type
+
+## Monitoring
+
+The script provides several monitoring options:
+
+1. **Log Monitoring**:
+   ```bash
+   sudo journalctl -u avalanchego -f
+   ```
+
+2. **Service Status**:
+   ```bash
+   sudo systemctl status avalanchego
+   ```
+
+3. **Bootstrap Progress**:
+   ```bash
+   curl -X POST --data '{
+       "jsonrpc":"2.0",
+       "id":1,
+       "method":"info.isBootstrapped",
+       "params":{"chain":"P"}
+   }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
+   ```
+
+4. **System Resources**:
+   ```bash
+   htop
+   ```
+
+## Service Management
+
 ```bash
+# Start the node
+sudo systemctl start avalanchego
+
+# Stop the node
+sudo systemctl stop avalanchego
+
+# Restart the node
+sudo systemctl restart avalanchego
+
 # Check status
 sudo systemctl status avalanchego
-
-# View logs
-sudo journalctl -u avalanchego -f
-
-# Start/Stop/Restart
-sudo systemctl start avalanchego
-sudo systemctl stop avalanchego
-sudo systemctl restart avalanchego
 ```
-
-### Bootstrap Status
-```bash
-# Check chain bootstrap status
-curl -X POST --data '{
-    "jsonrpc":"2.0",
-    "id":1,
-    "method":"info.isBootstrapped",
-    "params":{"chain":"X"}
-}' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info
-```
-
-### RPC Endpoints
-- P-Chain: `localhost:9650/ext/bc/P`
-- X-Chain: `localhost:9650/ext/bc/X`
-- C-Chain: `localhost:9650/ext/bc/C/rpc`
 
 ## Backup and Recovery
 
-The script automatically creates backups during updates:
-- Configuration files
-- Staking keys (for validator nodes)
-- Chain configurations
-- Backup location: `$HOME/.avalanchego/backup_<timestamp>`
+The script automatically handles:
+- Staking key backup during upgrades
+- Configuration preservation
+- Installation backups with timestamps
+
+Backups are stored in:
+```
+$HOME/avalanchego_backup_<timestamp>/
+```
 
 ## Troubleshooting
 
 1. **Node Won't Start**:
    - Check logs: `sudo journalctl -u avalanchego -f`
-   - Verify configuration in `$HOME/.avalanchego/configs/node.json`
-   - Ensure proper permissions on staking keys
+   - Verify permissions: `ls -la $HOME/.avalanchego/`
+   - Check service status: `sudo systemctl status avalanchego`
 
-2. **Update Fails**:
-   - Script automatically rolls back to previous version
-   - Check logs for specific errors
-   - Verify network connectivity
-   - Ensure sufficient disk space
+2. **RPC Issues**:
+   - Verify RPC configuration in node.json
+   - Check firewall rules: `sudo ufw status`
+   - Ensure correct http-host setting
 
 3. **Bootstrap Issues**:
-   - Full bootstrapping can take several days
-   - Monitor progress through logs
+   - Monitor logs for progress
    - Check network connectivity
-   - Verify hardware meets requirements
-
-## Security Considerations
-
-1. **Staking Keys** (Validator Nodes):
-   - Stored in `$HOME/.avalanchego/staking/`
-   - Permissions set to 600
-   - Backup keys securely
-   - Never share private keys
-
-2. **Firewall Rules**:
-   - Validator nodes: Restricted API access
-   - Historical/API nodes: Open API port
-   - All nodes: P2P port open
-
-3. **Best Practices**:
-   - Regular backups
-   - Monitor system resources
-   - Keep system updated
-   - Use strong SSH keys
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+   - Verify chain status for P, X, and C chains
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Support
 
 For support and questions:
 1. Open an issue in the repository
 2. Check existing documentation
-3. Review troubleshooting guide 
+3. Review troubleshooting guide
+
+## References
+
+- [Official Avalanche Documentation](https://docs.avax.network/)
+- [Node Operation Guides](https://docs.avax.network/nodes) 
