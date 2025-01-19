@@ -150,12 +150,48 @@ setup_avalanchego() {
     if [ "$NODE_TYPE" = "$VALIDATOR_NODE" ]; then
         if [ ! -f "$HOME_DIR/staking/staker.key" ]; then
             print_step "Generating staking keys..."
-            "$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego" --staking-tls-cert-file="$HOME_DIR/staking/staker.crt" --staking-tls-key-file="$HOME_DIR/staking/staker.key" || true
-            if [ -f "$HOME_DIR/staking/staker.key" ]; then
-                echo "✓ Staking keys generated successfully"
-                chmod 600 "$HOME_DIR/staking/staker.key"
-                chmod 600 "$HOME_DIR/staking/staker.crt"
-            else
+            
+            # Create a temporary config for key generation
+            local TEMP_CONFIG_FILE="$HOME_DIR/configs/temp_config.json"
+            echo '{
+                "network-id": "'${NETWORK_ID}'",
+                "staking-enabled": true,
+                "staking-tls-cert-file": "'${HOME_DIR}'/staking/staker.crt",
+                "staking-tls-key-file": "'${HOME_DIR}'/staking/staker.key",
+                "db-dir": "'${HOME_DIR}'/db",
+                "log-level": "info",
+                "http-host": "127.0.0.1"
+            }' > "$TEMP_CONFIG_FILE"
+
+            # Run avalanchego briefly to generate keys
+            "$GOPATH/src/github.com/ava-labs/avalanchego/build/avalanchego" \
+                --config-file="$TEMP_CONFIG_FILE" &
+            
+            # Store the PID
+            AVALANCHE_PID=$!
+            
+            # Wait for key generation (max 10 seconds)
+            COUNTER=0
+            while [ $COUNTER -lt 10 ]; do
+                if [ -f "$HOME_DIR/staking/staker.key" ] && [ -f "$HOME_DIR/staking/staker.crt" ]; then
+                    echo "✓ Staking keys generated successfully"
+                    chmod 600 "$HOME_DIR/staking/staker.key"
+                    chmod 600 "$HOME_DIR/staking/staker.crt"
+                    sleep 1
+                    kill $AVALANCHE_PID 2>/dev/null || true
+                    wait $AVALANCHE_PID 2>/dev/null || true
+                    rm -f "$TEMP_CONFIG_FILE"
+                    break
+                fi
+                sleep 1
+                ((COUNTER++))
+            done
+            
+            # Check if keys were generated
+            if [ ! -f "$HOME_DIR/staking/staker.key" ] || [ ! -f "$HOME_DIR/staking/staker.crt" ]; then
+                kill $AVALANCHE_PID 2>/dev/null || true
+                wait $AVALANCHE_PID 2>/dev/null || true
+                rm -f "$TEMP_CONFIG_FILE"
                 print_error "Failed to generate staking keys"
                 exit 1
             fi
