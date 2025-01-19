@@ -317,6 +317,7 @@ setup_avalanchego() {
     
     # Create directories
     mkdir -p "$HOME_DIR"/{db,configs,staking}
+    chmod 700 "$HOME_DIR/staking"
 
     if [ "$UPGRADE_MODE" = false ]; then
         # Fresh installation from official repository
@@ -336,16 +337,16 @@ setup_avalanchego() {
     git checkout "v$AVALANCHEGO_VERSION"
     ./scripts/build.sh
 
-    # Generate config
+    # For validator nodes, generate staking keys before config
+    if [ "$NODE_TYPE" == "validator" ]; then
+        generate_staking_keys
+    fi
+
+    # Generate main config
     generate_config
 
     # Setup systemd service
     setup_systemd_service
-
-    # Generate staking keys for validator
-    if [ "$NODE_TYPE" == "validator" ] && [ "$UPGRADE_MODE" = false ]; then
-        generate_staking_keys
-    fi
 }
 
 generate_config() {
@@ -440,32 +441,62 @@ EOL
 generate_staking_keys() {
     print_step "Generating staking keys..."
     
-    # Ensure the staking directory exists with correct permissions
+    # Create staking directory with proper permissions
     mkdir -p "${HOME_DIR}/staking"
     chmod 700 "${HOME_DIR}/staking"
     
-    # Generate the staking keys
-    if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
-        cd "$HOME/avalanchego"
-        ./build/avalanchego \
-            --staking-tls-cert-file="${HOME_DIR}/staking/staker.crt" \
-            --staking-tls-key-file="${HOME_DIR}/staking/staker.key" \
-            --chain-config-dir="" \
-            --http-host="" \
-            --http-port=9650 \
-            --staking-port=9651 \
-            --log-level=OFF \
-            --genesis-file="" &
+    # Generate temporary config for key generation
+    local TEMP_CONFIG="${HOME_DIR}/configs/temp-config.json"
+    mkdir -p "${HOME_DIR}/configs"
+    cat > "$TEMP_CONFIG" << EOL
+{
+    "network-id": "${NETWORK_ID}",
+    "staking-tls-cert-file": "${HOME_DIR}/staking/staker.crt",
+    "staking-tls-key-file": "${HOME_DIR}/staking/staker.key",
+    "http-host": "127.0.0.1",
+    "http-port": 9650,
+    "staking-port": 9651,
+    "log-level": "OFF",
+    "db-dir": "${HOME_DIR}/db-temp"
+}
+EOL
 
-        # Wait a moment for the keys to be generated
-        sleep 5
+    if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
+        print_step "Starting temporary node to generate keys..."
+        cd "$HOME/avalanchego"
+        
+        # Start node with temporary config
+        ./build/avalanchego --config-file="$TEMP_CONFIG" &
+        
+        # Store the PID
+        local NODE_PID=$!
+        
+        # Wait for key generation
+        local ATTEMPTS=0
+        local MAX_ATTEMPTS=30
+        while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+            if [ -f "${HOME_DIR}/staking/staker.key" ] && [ -f "${HOME_DIR}/staking/staker.crt" ]; then
+                echo "✓ Staking keys generated"
+                break
+            fi
+            echo "Waiting for key generation... ($(($ATTEMPTS + 1))/$MAX_ATTEMPTS)"
+            sleep 2
+            ATTEMPTS=$((ATTEMPTS + 1))
+        done
         
         # Kill the temporary node
-        pkill -f avalanchego
+        if ps -p $NODE_PID > /dev/null; then
+            kill $NODE_PID
+            wait $NODE_PID 2>/dev/null || true
+        fi
         
-        # Verify the keys were generated
+        # Clean up temporary files
+        rm -f "$TEMP_CONFIG"
+        rm -rf "${HOME_DIR}/db-temp"
+        
+        # Verify keys were generated
         if [ ! -f "${HOME_DIR}/staking/staker.key" ] || [ ! -f "${HOME_DIR}/staking/staker.crt" ]; then
-            print_error "Failed to generate staking keys"
+            print_error "Failed to generate staking keys after $MAX_ATTEMPTS attempts"
             exit 1
         fi
         
