@@ -3,7 +3,7 @@
 set -e
 
 VERSION="1.0.0"
-GOVERSION="1.19.6"
+GOVERSION="1.21.7"
 AVALANCHE_REPO="https://github.com/ava-labs/avalanchego.git"
 
 # Colors for output
