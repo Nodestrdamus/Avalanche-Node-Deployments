@@ -67,11 +67,19 @@ install_dependencies() {
     apt-get update
     apt-get install -y git curl wget make gcc g++ jq systemd build-essential
 
-    # Verify installation
+    # Verify installation with detailed output
+    echo -e "${YELLOW}Verifying installed dependencies...${NC}"
     for cmd in git curl wget make gcc g++ jq systemctl; do
         if ! command -v $cmd &> /dev/null; then
             echo -e "${RED}Failed to install $cmd${NC}"
-            exit 1
+            echo -e "${YELLOW}Attempting to fix installation...${NC}"
+            apt-get install -y $cmd
+            if ! command -v $cmd &> /dev/null; then
+                echo -e "${RED}Could not install $cmd. Please install it manually.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${GREEN}$cmd installed successfully${NC}"
         fi
     done
 }
@@ -96,27 +104,40 @@ create_systemd_service() {
     local node_type=$1
     local network=$2
     
-    # Create avalanche user if it doesn't exist
-    id -u avalanche &>/dev/null || useradd -rs /bin/false avalanche
+    # Create avalanche user if it doesn't exist and set shell to /bin/bash for debugging
+    id -u avalanche &>/dev/null || useradd -m -s /bin/bash avalanche
 
-    # Create and set permissions for data directory
+    # Create and set permissions for data directory with proper ownership
     mkdir -p /var/lib/avalanchego
     chown -R avalanche:avalanche /var/lib/avalanchego
+    chmod 755 /var/lib/avalanchego
 
-    # Ensure binary is executable
-    chmod +x /opt/avalanchego/avalanchego/build/avalanchego
+    # Ensure binary is executable and owned by avalanche user
+    chmod 755 /opt/avalanchego/avalanchego/build/avalanchego
+    chown -R avalanche:avalanche /opt/avalanchego
+
+    # Debug: Test binary execution as avalanche user
+    echo -e "${YELLOW}Testing binary execution...${NC}"
+    su - avalanche -c "/opt/avalanchego/avalanchego/build/avalanchego --version"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Binary execution test failed. Check permissions and binary integrity.${NC}"
+        exit 1
+    fi
     
-    # Create service file with absolute paths
+    # Create service file with environment setup and absolute paths
     cat > /etc/systemd/system/avalanchego.service << EOF
 [Unit]
 Description=AvalancheGo systemd service
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=avalanche
 Group=avalanche
 WorkingDirectory=/var/lib/avalanchego
+Environment=HOME=/var/lib/avalanchego
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/opt/avalanchego/avalanchego/build/avalanchego \\
     --network-id=$network \\
     --db-dir=/var/lib/avalanchego/db \\
@@ -128,35 +149,50 @@ RestartSec=1
 TimeoutStopSec=300
 LimitNOFILE=32768
 
+# Hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Set permissions
-    chown -R avalanche:avalanche /opt/avalanchego
+    # Create required directories with proper permissions
+    for dir in logs db plugins; do
+        mkdir -p /var/lib/avalanchego/$dir
+        chown avalanche:avalanche /var/lib/avalanchego/$dir
+        chmod 755 /var/lib/avalanchego/$dir
+    done
 
-    # Create log directory
-    mkdir -p /var/lib/avalanchego/logs
-    chown -R avalanche:avalanche /var/lib/avalanchego/logs
+    # Debug: List permissions
+    echo -e "${YELLOW}Checking directory permissions...${NC}"
+    ls -la /var/lib/avalanchego/
+    ls -la /opt/avalanchego/avalanchego/build/
 
-    # Create db directory
-    mkdir -p /var/lib/avalanchego/db
-    chown -R avalanche:avalanche /var/lib/avalanchego/db
-
-    # Create plugins directory
-    mkdir -p /var/lib/avalanchego/plugins
-    chown -R avalanche:avalanche /var/lib/avalanchego/plugins
-
-    # Reload systemd and start service
+    # Reload systemd and start service with debugging
+    echo -e "${YELLOW}Reloading systemd daemon...${NC}"
     systemctl daemon-reload
+
+    echo -e "${YELLOW}Enabling avalanchego service...${NC}"
     systemctl enable avalanchego
+
+    echo -e "${YELLOW}Starting avalanchego service...${NC}"
     systemctl start avalanchego
 
-    # Wait for service to start and check status
+    # Wait and check service status with detailed output
     sleep 5
     if ! systemctl is-active --quiet avalanchego; then
-        echo -e "${RED}Service failed to start. Checking logs...${NC}"
+        echo -e "${RED}Service failed to start. Collecting debug information...${NC}"
+        echo -e "\n${YELLOW}Service Status:${NC}"
+        systemctl status avalanchego
+        echo -e "\n${YELLOW}Last 50 Journal Entries:${NC}"
         journalctl -u avalanchego -n 50 --no-pager
+        echo -e "\n${YELLOW}Binary Location and Permissions:${NC}"
+        ls -l /opt/avalanchego/avalanchego/build/avalanchego
+        echo -e "\n${YELLOW}Service Configuration:${NC}"
+        cat /etc/systemd/system/avalanchego.service
         exit 1
     fi
 }
