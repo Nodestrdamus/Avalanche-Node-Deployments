@@ -65,7 +65,15 @@ remove_existing_installation() {
 install_dependencies() {
     echo -e "${GREEN}Installing dependencies...${NC}"
     apt-get update
-    apt-get install -y git curl wget make gcc g++ jq systemd
+    apt-get install -y git curl wget make gcc g++ jq systemd build-essential
+
+    # Verify installation
+    for cmd in git curl wget make gcc g++ jq systemctl; do
+        if ! command -v $cmd &> /dev/null; then
+            echo -e "${RED}Failed to install $cmd${NC}"
+            exit 1
+        fi
+    done
 }
 
 # Function to create AvalancheGo directory
@@ -88,7 +96,17 @@ create_systemd_service() {
     local node_type=$1
     local network=$2
     
-    # Create service file
+    # Create avalanche user if it doesn't exist
+    id -u avalanche &>/dev/null || useradd -rs /bin/false avalanche
+
+    # Create and set permissions for data directory
+    mkdir -p /var/lib/avalanchego
+    chown -R avalanche:avalanche /var/lib/avalanchego
+
+    # Ensure binary is executable
+    chmod +x /opt/avalanchego/avalanchego/build/avalanchego
+    
+    # Create service file with absolute paths
     cat > /etc/systemd/system/avalanchego.service << EOF
 [Unit]
 Description=AvalancheGo systemd service
@@ -97,25 +115,50 @@ After=network.target
 [Service]
 Type=simple
 User=avalanche
-ExecStart=/opt/avalanchego/avalanchego/build/avalanchego --network-id=$network $NODE_CONFIG
+Group=avalanche
+WorkingDirectory=/var/lib/avalanchego
+ExecStart=/opt/avalanchego/avalanchego/build/avalanchego \\
+    --network-id=$network \\
+    --db-dir=/var/lib/avalanchego/db \\
+    --log-dir=/var/lib/avalanchego/logs \\
+    --plugin-dir=/var/lib/avalanchego/plugins \\
+    $NODE_CONFIG
 Restart=always
 RestartSec=1
+TimeoutStopSec=300
 LimitNOFILE=32768
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Create avalanche user if it doesn't exist
-    id -u avalanche &>/dev/null || useradd -rs /bin/false avalanche
-
     # Set permissions
     chown -R avalanche:avalanche /opt/avalanchego
 
-    # Enable and start service
+    # Create log directory
+    mkdir -p /var/lib/avalanchego/logs
+    chown -R avalanche:avalanche /var/lib/avalanchego/logs
+
+    # Create db directory
+    mkdir -p /var/lib/avalanchego/db
+    chown -R avalanche:avalanche /var/lib/avalanchego/db
+
+    # Create plugins directory
+    mkdir -p /var/lib/avalanchego/plugins
+    chown -R avalanche:avalanche /var/lib/avalanchego/plugins
+
+    # Reload systemd and start service
     systemctl daemon-reload
     systemctl enable avalanchego
     systemctl start avalanchego
+
+    # Wait for service to start and check status
+    sleep 5
+    if ! systemctl is-active --quiet avalanchego; then
+        echo -e "${RED}Service failed to start. Checking logs...${NC}"
+        journalctl -u avalanchego -n 50 --no-pager
+        exit 1
+    fi
 }
 
 # Main installation process
