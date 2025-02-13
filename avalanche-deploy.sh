@@ -416,171 +416,115 @@ perform_backup() {
     echo "Select backup type:"
     echo "1) Node identity files only"
     echo "2) Full database backup"
-    echo "3) Direct database copy (for large databases)"
-    read -p "Enter choice (1-3): " backup_type
+    read -p "Enter choice (1-2): " backup_type
 
-    echo "Select backup method:"
-    echo "1) Local backup"
-    echo "2) Remote backup (using scp)"
-    read -p "Enter choice (1-2): " backup_choice
+    # Backup staking files
+    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
+        cp -r /home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
+            print_message "Failed to copy staking files" "$RED"
+            return 1
+        }
+    else
+        print_message "Error: Staking directory not found" "$RED"
+        return 1
+    fi
 
-    case $backup_choice in
-        1)
-            if [ -d "/home/avalanche/.avalanchego/staking" ]; then
-                # Copy staking files
-                cp /home/avalanche/.avalanchego/staking/{staker.key,staker.crt,signer.key} $BACKUP_DIR/ || {
-                    print_message "Failed to copy staking files" "$RED"
-                    return 1
-                }
-                
-                # Perform database backup if selected
-                if [ "$backup_type" = "2" ]; then
-                    perform_db_backup "$BACKUP_DIR" "archive" || return 1
-                elif [ "$backup_type" = "3" ]; then
-                    perform_db_backup "$BACKUP_DIR" "direct" || return 1
-                fi
-                
-                print_message "Backup completed successfully to $BACKUP_DIR" "$GREEN"
-            else
-                print_message "Error: Staking directory not found" "$RED"
+    # Perform database backup if selected
+    if [ "$backup_type" = "2" ]; then
+        print_message "Performing database backup..." "$YELLOW"
+        
+        # Stop the node
+        systemctl stop avalanchego || {
+            print_message "Failed to stop avalanchego service" "$RED"
+            return 1
+        }
+        
+        # Create database backup
+        if [ -d "/home/avalanche/.avalanchego/db" ]; then
+            tar czf "$BACKUP_DIR/db_backup.tar.gz" -C /home/avalanche/.avalanchego db || {
+                print_message "Failed to create database archive" "$RED"
+                systemctl start avalanchego
                 return 1
-            fi
-            ;;
-        2)
-            read -p "Enter remote node IP address: " remote_ip
-            read -p "Enter remote username (default: ubuntu): " remote_user
-            read -p "Enter path to SSH key (optional): " ssh_key
-            remote_user=${remote_user:-ubuntu}
-            
-            scp_cmd="scp -r"
-            ssh_cmd="ssh"
-            if [ ! -z "$ssh_key" ]; then
-                scp_cmd="scp -i $ssh_key -r"
-                ssh_cmd="ssh -i $ssh_key"
-            fi
-            
-            print_message "Attempting remote backup..." "$YELLOW"
-            if [ "$backup_type" = "1" ]; then
-                $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
-                    print_message "Remote backup failed" "$RED"
-                    return 1
-                }
-            elif [ "$backup_type" = "2" ]; then
-                # Stop remote node for database backup
-                $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl stop avalanchego"
-                
-                # Backup both staking files and database
-                $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
-                    print_message "Failed to backup staking files" "$RED"
-                    $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-                    return 1
-                }
-                
-                $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/db $BACKUP_DIR/ || {
-                    print_message "Failed to backup database" "$RED"
-                    $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-                    return 1
-                }
-                
-                # Start remote node
-                $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-            elif [ "$backup_type" = "3" ]; then
-                # Direct copy method for large databases
-                perform_db_backup "$BACKUP_DIR" "direct" "$ssh_key" || return 1
-            fi
-            
-            print_message "Remote backup completed successfully to $BACKUP_DIR" "$GREEN"
-            ;;
-        *)
-            print_message "Invalid choice" "$RED"
-            return 1
-            ;;
-    esac
-    return 0
-}
-
-# Function to perform database backup
-perform_db_backup() {
-    local backup_dir="$1"
-    print_message "Performing database backup..." "$YELLOW"
-    
-    # Stop the node
-    systemctl stop avalanchego || {
-        print_message "Failed to stop avalanchego service" "$RED"
-        return 1
-    }
-    
-    # Create database backup
-    if [ "$2" = "direct" ]; then
-        # Direct copy method
-        ssh -i "$3" ${remote_user}@${remote_ip} "tar czf - .avalanchego/db" | tar xvzf - -C "$backup_dir" || {
-            print_message "Failed to perform direct database copy" "$RED"
-            systemctl start avalanchego
-            return 1
-        }
-    else
-        # Archive method
-        tar czf "$backup_dir/db_backup.tar.gz" /home/avalanche/.avalanchego/db || {
-            print_message "Failed to create database archive" "$RED"
-            systemctl start avalanchego
-            return 1
-        }
-    fi
-    
-    # Start the node
-    systemctl start avalanchego
-    
-    # Verify node is running
-    sleep 5
-    if ! systemctl is-active --quiet avalanchego; then
-        print_message "Failed to restart avalanchego service" "$RED"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Function to perform database restore
-perform_db_restore() {
-    local backup_dir="$1"
-    print_message "Performing database restore..." "$YELLOW"
-    
-    # Stop the node
-    systemctl stop avalanchego || {
-        print_message "Failed to stop avalanchego service" "$RED"
-        return 1
-    }
-    
-    # Backup existing database
-    if [ -d "/home/avalanche/.avalanchego/db" ]; then
-        mv /home/avalanche/.avalanchego/db /home/avalanche/.avalanchego/db-old || {
-            print_message "Failed to backup existing database" "$RED"
-            systemctl start avalanchego
-            return 1
-        }
-    fi
-    
-    # Restore database
-    if [ -f "$backup_dir/db_backup.tar.gz" ]; then
-        tar xzf "$backup_dir/db_backup.tar.gz" -C /home/avalanche/.avalanchego/ || {
-            print_message "Failed to restore database from archive" "$RED"
-            systemctl start avalanchego
-            return 1
-        }
-    elif [ -d "$backup_dir/db" ]; then
-        cp -r "$backup_dir/db" /home/avalanche/.avalanchego/ || {
-            print_message "Failed to restore database from directory" "$RED"
-            systemctl start avalanchego
-            return 1
-        }
-    else
-        print_message "No valid database backup found" "$RED"
+            }
+        fi
+        
+        # Start the node
         systemctl start avalanchego
+        
+        # Verify node is running
+        sleep 5
+        if ! systemctl is-active --quiet avalanchego; then
+            print_message "Failed to restart avalanchego service" "$RED"
+            return 1
+        }
+    fi
+    
+    print_message "Backup completed successfully to $BACKUP_DIR" "$GREEN"
+    return 0
+}
+
+# Function to restore backup
+perform_restore() {
+    print_message "\nAvalanche Node Restore" "$GREEN"
+    echo "----------------------------------------"
+    
+    # Select backup directory
+    read -p "Enter backup directory path: " backup_dir
+    
+    if [ ! -d "$backup_dir" ]; then
+        print_message "Invalid backup directory" "$RED"
         return 1
+    }
+    
+    # Stop the node
+    systemctl stop avalanchego || {
+        print_message "Failed to stop avalanchego service" "$RED"
+        return 1
+    }
+    
+    # Backup existing files before restore
+    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
+        mv /home/avalanche/.avalanchego/staking /home/avalanche/.avalanchego/staking-old || {
+            print_message "Failed to backup existing staking files" "$RED"
+            systemctl start avalanchego
+            return 1
+        }
+    fi
+    
+    # Restore staking files
+    if [ -d "$backup_dir/staking" ]; then
+        cp -r "$backup_dir/staking" /home/avalanche/.avalanchego/ || {
+            print_message "Failed to restore staking files" "$RED"
+            systemctl start avalanchego
+            return 1
+        }
+    fi
+    
+    # Restore database if backup exists
+    if [ -f "$backup_dir/db_backup.tar.gz" ]; then
+        print_message "Restoring database..." "$YELLOW"
+        
+        # Backup existing database
+        if [ -d "/home/avalanche/.avalanchego/db" ]; then
+            mv /home/avalanche/.avalanchego/db /home/avalanche/.avalanchego/db-old || {
+                print_message "Failed to backup existing database" "$RED"
+                systemctl start avalanchego
+                return 1
+            }
+        fi
+        
+        # Extract database backup
+        tar xzf "$backup_dir/db_backup.tar.gz" -C /home/avalanche/.avalanchego/ || {
+            print_message "Failed to restore database" "$RED"
+            systemctl start avalanchego
+            return 1
+        }
     fi
     
     # Fix permissions
-    chown -R avalanche:avalanche /home/avalanche/.avalanchego/db
+    chown -R avalanche:avalanche /home/avalanche/.avalanchego
+    chmod 700 /home/avalanche/.avalanchego/staking
+    chmod 600 /home/avalanche/.avalanchego/staking/*
     
     # Start the node
     systemctl start avalanchego
@@ -592,6 +536,7 @@ perform_db_restore() {
         return 1
     }
     
+    print_message "Restore completed successfully" "$GREEN"
     return 0
 }
 
@@ -599,40 +544,20 @@ perform_db_restore() {
 detect_existing_deployment() {
     print_message "Checking for existing Avalanche deployment..." "$YELLOW"
     
-    local EXISTING_DEPLOYMENT=false
-    local MANAGED_BY_SCRIPT=false
-    local NEEDS_MIGRATION=false
-    
     # Check for common installation paths and files
-    local CHECK_PATHS=(
-        "/home/avalanche/.avalanchego"
-        "/home/avalanche/avalanchego"
-        "/home/avalanche/.avalanchego/staking"
-        "/etc/systemd/system/avalanchego.service"
-    )
-    
-    for path in "${CHECK_PATHS[@]}"; do
-        if [ -e "$path" ]; then
-            EXISTING_DEPLOYMENT=true
-            break
-        fi
-    done
-    
-    if [ "$EXISTING_DEPLOYMENT" = true ]; then
+    if [ -d "/home/avalanche/.avalanchego" ] || [ -d "/home/avalanche/avalanchego" ] || [ -f "/etc/systemd/system/avalanchego.service" ]; then
         print_message "Existing Avalanche deployment detected!" "$YELLOW"
-        
-        # Check if it was deployed by this script
-        if grep -q "# Managed by avalanche-deploy.sh" /etc/systemd/system/avalanchego.service 2>/dev/null; then
-            MANAGED_BY_SCRIPT=true
-        fi
         
         echo "----------------------------------------"
         echo "Deployment Details:"
         
         # Display current configuration
-        print_message "Node Type: $NODE_TYPE" "$YELLOW"
-        print_message "RPC Access: $RPC_ACCESS" "$YELLOW"
-        print_message "State Sync: $STATE_SYNC" "$YELLOW"
+        if [ -f "/home/avalanche/.avalanchego/config.json" ]; then
+            source /home/avalanche/.avalanchego/config.json
+            print_message "Node Type: $NODE_TYPE" "$YELLOW"
+            print_message "RPC Access: $RPC_ACCESS" "$YELLOW"
+            print_message "State Sync: $STATE_SYNC" "$YELLOW"
+        fi
         
         # Check service status
         if systemctl is-active --quiet avalanchego; then
@@ -642,38 +567,19 @@ detect_existing_deployment() {
         fi
         
         echo "----------------------------------------"
-        if [ "$MANAGED_BY_SCRIPT" = true ]; then
-            print_message "This deployment was managed by avalanche-deploy.sh" "$GREEN"
-        else
-            print_message "This appears to be a manual or third-party deployment" "$YELLOW"
-            NEEDS_MIGRATION=true
-        fi
-        
-        if [ "$NEEDS_MIGRATION" = true ]; then
-            print_message "\nThis deployment needs migration to be fully managed by this script" "$YELLOW"
-            print_message "Migration will:" "$YELLOW"
-            echo "1. Backup all existing files"
-            echo "2. Update service configuration"
-            echo "3. Fix file permissions"
-            echo "4. Add monitoring capabilities"
-            echo "5. Enable script management"
-        fi
-        
-        echo "----------------------------------------"
         echo "Available Actions:"
         echo "B) Backup existing deployment"
-        echo "M) Migrate to script management"
         echo "U) Upgrade node"
+        echo "R) Restore from backup"
         echo "C) Cancel"
-        read -p "Select action [B/M/U/C]: " action
+        read -p "Select action [B/U/R/C]: " action
         case $action in
             [Bb])
-                print_message "Backing up existing deployment..." "$YELLOW"
                 perform_backup
                 ;;
-            [Mm])
+            [Uu])
                 if systemctl is-active --quiet avalanchego; then
-                    print_message "Please stop the node before migration" "$RED"
+                    print_message "Please stop the node before upgrade" "$RED"
                     read -p "Stop node now? [y/n]: " stop_node
                     if [ "$stop_node" = "y" ]; then
                         systemctl stop avalanchego
@@ -681,16 +587,10 @@ detect_existing_deployment() {
                         exit 1
                     fi
                 fi
-                
-                print_message "Starting migration process..." "$YELLOW"
-                perform_backup
-                configure_node
-                configure_security
-                print_message "Migration completed successfully" "$GREEN"
-                ;;
-            [Uu])
-                print_message "Proceeding with upgrade..." "$YELLOW"
                 install_avalanchego
+                ;;
+            [Rr])
+                perform_restore
                 ;;
             *)
                 print_message "Operation cancelled by user" "$YELLOW"
@@ -698,126 +598,6 @@ detect_existing_deployment() {
                 ;;
         esac
     fi
-    
-    return 0
-}
-
-# Function to perform remote backup
-perform_remote_backup() {
-    print_message "\nRemote Backup" "$GREEN"
-    echo "----------------------------------------"
-    
-    read -p "Enter remote node IP address: " remote_ip
-    read -p "Enter remote username (default: ubuntu): " remote_user
-    read -p "Enter path to SSH key (optional): " ssh_key
-    remote_user=${remote_user:-ubuntu}
-    
-    scp_cmd="scp -r"
-    ssh_cmd="ssh"
-    if [ ! -z "$ssh_key" ]; then
-        scp_cmd="scp -i $ssh_key -r"
-        ssh_cmd="ssh -i $ssh_key"
-    fi
-    
-    print_message "Attempting remote backup..." "$YELLOW"
-    perform_backup
-    return $?
-}
-
-# Function to perform GitHub backup
-perform_github_backup() {
-    print_message "\nGitHub Backup" "$GREEN"
-    echo "----------------------------------------"
-    
-    # Check for GitHub configuration
-    if [ ! -f "/home/avalanche/.avalanchego/github_backup.conf" ]; then
-        print_message "GitHub backup not configured. Please configure first." "$RED"
-        return 1
-    }
-    
-    # Load GitHub configuration
-    source /home/avalanche/.avalanchego/github_backup.conf
-    
-    if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_REPO" ]; then
-        print_message "Invalid GitHub configuration. Please reconfigure." "$RED"
-        return 1
-    }
-    
-    # Create backup
-    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    BACKUP_DIR=~/github_backup_${TIMESTAMP}
-    
-    # Create backup directory
-    mkdir -p "$BACKUP_DIR" || {
-        print_message "Failed to create backup directory" "$RED"
-        return 1
-    }
-    
-    # Copy staking files
-    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
-        cp -r /home/avalanche/.avalanchego/staking "$BACKUP_DIR/" || {
-            print_message "Failed to copy staking files" "$RED"
-            return 1
-        }
-    fi
-    
-    # Create metadata file
-    cat > "$BACKUP_DIR/backup_metadata.json" << EOF
-{
-    "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-    "node_type": "$NODE_TYPE",
-    "avalanchego_version": "$(avalanchego --version 2>/dev/null || echo 'unknown')",
-    "backup_type": "github"
-}
-EOF
-    
-    # Clone repository
-    git clone "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git" "$BACKUP_DIR/repo" || {
-        print_message "Failed to clone repository" "$RED"
-        return 1
-    }
-    
-    # Copy backup to repository
-    cp -r "$BACKUP_DIR"/* "$BACKUP_DIR/repo/" || {
-        print_message "Failed to copy backup files to repository" "$RED"
-        return 1
-    }
-    
-    # Configure git
-    cd "$BACKUP_DIR/repo"
-    git config user.email "backup@avalanchenode.local"
-    git config user.name "Avalanche Node Backup"
-    
-    # Commit and push changes
-    git add . || {
-        print_message "Failed to stage files" "$RED"
-        return 1
-    }
-    
-    git commit -m "Backup ${TIMESTAMP}" || {
-        print_message "Failed to commit changes" "$RED"
-        return 1
-    }
-    
-    # Try to push with retries
-    for i in {1..3}; do
-        if git push origin main; then
-            print_message "Backup successfully pushed to GitHub" "$GREEN"
-            break
-        else
-            if [ $i -lt 3 ]; then
-                print_message "Push attempt $i failed. Retrying..." "$YELLOW"
-                sleep 5
-            else
-                print_message "Failed to push backup to GitHub" "$RED"
-                return 1
-            fi
-        fi
-    done
-    
-    # Cleanup
-    cd ~
-    rm -rf "$BACKUP_DIR"
     
     return 0
 }
@@ -907,12 +687,6 @@ display_node_info() {
     print_message "  - staker.key  (Node private key)" "$YELLOW"
     print_message "  - signer.key  (BLS key)" "$YELLOW"
 }
-
-# Add command line option for automated backups
-if [ "$1" = "--github-backup" ]; then
-    perform_github_backup
-    exit $?
-fi
 
 # Call main function if no arguments provided
 if [ $# -eq 0 ]; then
