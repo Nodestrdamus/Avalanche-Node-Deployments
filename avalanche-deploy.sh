@@ -1,5 +1,28 @@
 #!/bin/bash
 
+# Check if running on Ubuntu Server
+check_ubuntu_server() {
+    if ! grep -q "Ubuntu" /etc/os-release; then
+        echo "This script requires Ubuntu Server."
+        exit 1
+    fi
+    
+    # Check Ubuntu version
+    ubuntu_version=$(lsb_release -rs)
+    if ! [[ "$ubuntu_version" =~ ^(20.04|22.04)$ ]]; then
+        echo "This script requires Ubuntu Server 20.04 or 22.04 LTS."
+        exit 1
+    fi
+}
+
+# Check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Please run as root (use sudo)"
+        exit 1
+    fi
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -11,16 +34,45 @@ print_message() {
     echo -e "${2}${1}${NC}"
 }
 
-# Function to get public IP
-get_public_ip() {
-    curl -s https://api.ipify.org
+# Function to create avalanche user if it doesn't exist
+create_avalanche_user() {
+    if ! id -u avalanche >/dev/null 2>&1; then
+        useradd -m -s /bin/bash avalanche || {
+            print_message "Failed to create avalanche user" "$RED"
+            exit 1
+        }
+    fi
 }
 
 # Function to install system dependencies
 install_dependencies() {
     print_message "Installing system dependencies..." "$YELLOW"
-    apt-get update
-    apt-get install -y curl wget git build-essential
+    apt-get update || {
+        print_message "Failed to update package lists" "$RED"
+        exit 1
+    }
+    
+    # Install required packages
+    apt-get install -y \
+        curl \
+        wget \
+        git \
+        build-essential \
+        tar \
+        lsb-release \
+        ufw \
+        fail2ban \
+        jq \
+        bc \
+        || {
+        print_message "Failed to install required packages" "$RED"
+        exit 1
+    }
+}
+
+# Function to get public IP
+get_public_ip() {
+    curl -s https://api.ipify.org
 }
 
 # Function to configure network environment
@@ -30,7 +82,7 @@ configure_network() {
         read -p "Existing configuration found. Override? [y/n]: " override
         if [ "$override" != "y" ]; then
             print_message "Keeping existing configuration" "$YELLOW"
-            return
+            return 0
         fi
     fi
 
@@ -49,7 +101,7 @@ configure_network() {
             detected_ip=$(get_public_ip)
             echo "Detected '${detected_ip}' as your public IP. Is this correct? [y,n]:"
             read ip_correct
-            if [[ $ip_correct == "y" ]]; then
+            if [ "$ip_correct" = "y" ]; then
                 NODE_IP=$detected_ip
             else
                 read -p "Please enter your static IP: " NODE_IP
@@ -62,12 +114,12 @@ configure_network() {
     esac
 
     # Configure RPC access based on node type
-    if [ "$NODE_TYPE" == "validator" ]; then
+    if [ "$NODE_TYPE" = "validator" ]; then
         RPC_ACCESS="private"
     else
         echo -e "\nRPC port should be public (this is a public API node) or private (this is a validator)? [public, private]:"
         read RPC_ACCESS
-        if [ "$RPC_ACCESS" == "public" ]; then
+        if [ "$RPC_ACCESS" = "public" ]; then
             print_message "\nWARNING: Public RPC access requires proper firewall configuration!" "$YELLOW"
             read -p "Are you sure you want to continue? [y/n]: " confirm
             if [ "$confirm" != "y" ]; then
@@ -77,7 +129,7 @@ configure_network() {
     fi
 
     # Configure state sync based on node type
-    if [ "$NODE_TYPE" == "archive" ]; then
+    if [ "$NODE_TYPE" = "archive" ]; then
         STATE_SYNC="off"
     else
         echo -e "\nDo you want state sync bootstrapping to be turned on or off? [on, off]:"
@@ -85,6 +137,7 @@ configure_network() {
     fi
 
     # Save configuration
+    mkdir -p /home/avalanche/.avalanchego
     cat > /home/avalanche/.avalanchego/config.json << EOF
 {
     "network_type": "$connection_type",
@@ -106,7 +159,7 @@ configure_firewall() {
     ufw allow 22/tcp
     ufw allow 9651/tcp
     
-    if [ "$RPC_ACCESS" == "public" ]; then
+    if [ "$RPC_ACCESS" = "public" ]; then
         ufw allow 9650/tcp
     fi
     
@@ -118,13 +171,13 @@ create_systemd_service() {
     local extra_args="$1"
     
     # Build configuration based on node type and settings
-    if [ "$RPC_ACCESS" == "private" ]; then
+    if [ "$RPC_ACCESS" = "private" ]; then
         extra_args="$extra_args --http.addr=127.0.0.1"
     else
         extra_args="$extra_args --http.addr=0.0.0.0"
     fi
 
-    if [ "$STATE_SYNC" == "off" ]; then
+    if [ "$STATE_SYNC" = "off" ]; then
         extra_args="$extra_args --state-sync-disabled=true"
     fi
 
@@ -133,26 +186,54 @@ create_systemd_service() {
     fi
 
     # Enable indexing for RPC nodes
-    if [ "$NODE_TYPE" == "archive" ] || [ "$NODE_TYPE" == "api" ]; then
+    if [ "$NODE_TYPE" = "archive" ] || [ "$NODE_TYPE" = "api" ]; then
         extra_args="$extra_args --index-enabled=true"
     fi
 
+    # Create systemd service with proper security settings
     cat > /etc/systemd/system/avalanchego.service << EOF
 [Unit]
 Description=AvalancheGo systemd service
+After=network.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=avalanche
+Group=avalanche
+WorkingDirectory=/home/avalanche
 ExecStart=/home/avalanche/avalanchego/avalanchego $extra_args
 LimitNOFILE=32768
 Restart=always
 RestartSec=1
+TimeoutStopSec=300
+
+# Security settings
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # Set proper permissions
+    chown root:root /etc/systemd/system/avalanchego.service
+    chmod 644 /etc/systemd/system/avalanchego.service
+
+    # Create and set permissions for required directories
+    mkdir -p /home/avalanche/.avalanchego
+    mkdir -p /home/avalanche/avalanchego
+    chown -R avalanche:avalanche /home/avalanche/.avalanchego
+    chown -R avalanche:avalanche /home/avalanche/avalanchego
+    chmod 750 /home/avalanche/.avalanchego
+    chmod 750 /home/avalanche/avalanchego
 
     systemctl daemon-reload
     systemctl enable avalanchego
@@ -168,7 +249,7 @@ install_avalanchego() {
         current_version=$(avalanchego --version 2>/dev/null | grep -oP 'avalanchego/[0-9]+\.[0-9]+\.[0-9]+' | cut -d'/' -f2)
         latest_version=$(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | grep -oP '"tag_name": "v\K[^"]*')
         
-        if [ ! -z "$current_version" ] && [ ! -z "$latest_version" ]; then
+        if [ -n "$current_version" ] && [ -n "$latest_version" ]; then
             if [ "$current_version" = "$latest_version" ]; then
                 print_message "Current version ($current_version) is up to date" "$GREEN"
                 read -p "Reinstall anyway? [y/n]: " reinstall
@@ -183,7 +264,9 @@ install_avalanchego() {
     
     # Download installer with retry mechanism
     for i in {1..3}; do
-        wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanchego-installer.sh && break || {
+        if wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanchego-installer.sh; then
+            break
+        else
             if [ $i -lt 3 ]; then
                 print_message "Download attempt $i failed. Retrying..." "$YELLOW"
                 sleep 5
@@ -191,7 +274,7 @@ install_avalanchego() {
                 print_message "Failed to download Avalanche installer script" "$RED"
                 exit 1
             fi
-        }
+        fi
     done
     
     chmod 755 avalanchego-installer.sh || {
@@ -208,14 +291,14 @@ $STATE_SYNC
 EOF
 
     # Run installer with predefined answers
-    cat installer_answers.txt | ./avalanchego-installer.sh || {
+    if ! cat installer_answers.txt | ./avalanchego-installer.sh; then
         print_message "Avalanche installer failed" "$RED"
         rm installer_answers.txt
         exit 1
-    }
+    fi
     
     # Clean up
-    rm installer_answers.txt avalanchego-installer.sh
+    rm -f installer_answers.txt avalanchego-installer.sh
 
     # Verify installation
     if ! command -v avalanchego &> /dev/null; then
@@ -245,32 +328,72 @@ configure_security() {
     
     # Set proper file permissions for staking files
     if [ -d "/home/avalanche/.avalanchego/staking" ]; then
+        # Ensure directory exists with proper permissions
+        mkdir -p /home/avalanche/.avalanchego/staking
+        chown -R avalanche:avalanche /home/avalanche/.avalanchego/staking
         chmod 700 /home/avalanche/.avalanchego/staking || {
             print_message "Failed to set staking directory permissions" "$RED"
             exit 1
         }
-        chmod 600 /home/avalanche/.avalanchego/staking/staker.key || {
-            print_message "Failed to set staker.key permissions" "$RED"
-            exit 1
-        }
-        chmod 600 /home/avalanche/.avalanchego/staking/signer.key || {
-            print_message "Failed to set signer.key permissions" "$RED"
-            exit 1
-        }
+        
+        # Set permissions for key files if they exist
+        for file in staker.key staker.crt signer.key; do
+            if [ -f "/home/avalanche/.avalanchego/staking/$file" ]; then
+                chown avalanche:avalanche "/home/avalanche/.avalanchego/staking/$file"
+                chmod 600 "/home/avalanche/.avalanchego/staking/$file" || {
+                    print_message "Failed to set $file permissions" "$RED"
+                    exit 1
+                }
+            fi
+        done
     fi
     
+    # Configure system limits
+    cat > /etc/security/limits.d/avalanche.conf << EOF
+avalanche soft nofile 32768
+avalanche hard nofile 65536
+EOF
+
+    # Configure sysctl parameters
+    cat > /etc/sysctl.d/99-avalanche.conf << EOF
+net.core.rmem_max=2500000
+net.core.wmem_max=2500000
+EOF
+    sysctl -p /etc/sysctl.d/99-avalanche.conf
+
     # Install and configure fail2ban if public access
-    if [ "$RPC_ACCESS" == "public" ]; then
+    if [ "$RPC_ACCESS" = "public" ]; then
         print_message "Installing fail2ban for additional security..." "$YELLOW"
         apt-get install -y fail2ban || {
             print_message "Failed to install fail2ban" "$RED"
             exit 1
         }
+
+        # Configure fail2ban for Avalanche
+        cat > /etc/fail2ban/jail.d/avalanche.conf << EOF
+[avalanche]
+enabled = true
+port = 9650
+filter = avalanche
+logpath = /var/log/syslog
+maxretry = 5
+findtime = 300
+bantime = 3600
+EOF
+
+        # Create fail2ban filter for Avalanche
+        cat > /etc/fail2ban/filter.d/avalanche.conf << EOF
+[Definition]
+failregex = ^.*Invalid token:.*from <HOST>
+            ^.*Too many requests:.*from <HOST>
+ignoreregex =
+EOF
+
         systemctl enable fail2ban || {
             print_message "Failed to enable fail2ban" "$RED"
             exit 1
         }
-        systemctl start fail2ban || {
+        systemctl restart fail2ban || {
             print_message "Failed to start fail2ban" "$RED"
             exit 1
         }
@@ -311,9 +434,9 @@ perform_backup() {
                 }
                 
                 # Perform database backup if selected
-                if [ "$backup_type" == "2" ]; then
+                if [ "$backup_type" = "2" ]; then
                     perform_db_backup "$BACKUP_DIR" "archive" || exit 1
-                elif [ "$backup_type" == "3" ]; then
+                elif [ "$backup_type" = "3" ]; then
                     perform_db_backup "$BACKUP_DIR" "direct" || exit 1
                 fi
                 
@@ -337,12 +460,12 @@ perform_backup() {
             fi
             
             print_message "Attempting remote backup..." "$YELLOW"
-            if [ "$backup_type" == "1" ]; then
+            if [ "$backup_type" = "1" ]; then
                 $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
                     print_message "Remote backup failed" "$RED"
                     exit 1
                 }
-            elif [ "$backup_type" == "2" ]; then
+            elif [ "$backup_type" = "2" ]; then
                 # Stop remote node for database backup
                 $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl stop avalanchego"
                 
@@ -361,7 +484,7 @@ perform_backup() {
                 
                 # Start remote node
                 $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-            elif [ "$backup_type" == "3" ]; then
+            elif [ "$backup_type" = "3" ]; then
                 # Direct copy method for large databases
                 perform_db_backup "$BACKUP_DIR" "direct" "$ssh_key" || exit 1
             fi
@@ -387,7 +510,7 @@ perform_db_backup() {
     }
     
     # Create database backup
-    if [ "$2" == "direct" ]; then
+    if [ "$2" = "direct" ]; then
         # Direct copy method
         ssh -i "$3" ${remote_user}@${remote_ip} "tar czf - .avalanchego/db" | tar xvzf - -C "$backup_dir" || {
             print_message "Failed to perform direct database copy" "$RED"
@@ -1210,7 +1333,7 @@ print_message "Config directory:     /home/avalanche/.avalanchego" "$YELLOW"
 print_message "Binary location:      /home/avalanche/avalanchego/avalanchego" "$YELLOW"
 print_message "Service file:         /etc/systemd/system/avalanchego.service" "$YELLOW"
 
-if [ "$RPC_ACCESS" == "public" ]; then
+if [ "$RPC_ACCESS" = "public" ]; then
     print_message "\nRPC Endpoints:" "$GREEN"
     echo "----------------------------------------"
     print_message "HTTP RPC:     http://$NODE_IP:9650" "$YELLOW"
