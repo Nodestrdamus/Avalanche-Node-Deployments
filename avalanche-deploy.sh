@@ -410,7 +410,7 @@ perform_backup() {
     BACKUP_DIR=~/avalanche_backup/${TIMESTAMP}
     mkdir -p $BACKUP_DIR || {
         print_message "Failed to create backup directory" "$RED"
-        exit 1
+        return 1
     }
     
     echo "Select backup type:"
@@ -430,20 +430,20 @@ perform_backup() {
                 # Copy staking files
                 cp /home/avalanche/.avalanchego/staking/{staker.key,staker.crt,signer.key} $BACKUP_DIR/ || {
                     print_message "Failed to copy staking files" "$RED"
-                    exit 1
+                    return 1
                 }
                 
                 # Perform database backup if selected
                 if [ "$backup_type" = "2" ]; then
-                    perform_db_backup "$BACKUP_DIR" "archive" || exit 1
+                    perform_db_backup "$BACKUP_DIR" "archive" || return 1
                 elif [ "$backup_type" = "3" ]; then
-                    perform_db_backup "$BACKUP_DIR" "direct" || exit 1
+                    perform_db_backup "$BACKUP_DIR" "direct" || return 1
                 fi
                 
                 print_message "Backup completed successfully to $BACKUP_DIR" "$GREEN"
             else
                 print_message "Error: Staking directory not found" "$RED"
-                exit 1
+                return 1
             fi
             ;;
         2)
@@ -463,7 +463,7 @@ perform_backup() {
             if [ "$backup_type" = "1" ]; then
                 $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
                     print_message "Remote backup failed" "$RED"
-                    exit 1
+                    return 1
                 }
             elif [ "$backup_type" = "2" ]; then
                 # Stop remote node for database backup
@@ -473,29 +473,30 @@ perform_backup() {
                 $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
                     print_message "Failed to backup staking files" "$RED"
                     $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-                    exit 1
+                    return 1
                 }
                 
                 $scp_cmd ${remote_user}@${remote_ip}:/home/avalanche/.avalanchego/db $BACKUP_DIR/ || {
                     print_message "Failed to backup database" "$RED"
                     $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
-                    exit 1
+                    return 1
                 }
                 
                 # Start remote node
                 $ssh_cmd ${remote_user}@${remote_ip} "sudo systemctl start avalanchego"
             elif [ "$backup_type" = "3" ]; then
                 # Direct copy method for large databases
-                perform_db_backup "$BACKUP_DIR" "direct" "$ssh_key" || exit 1
+                perform_db_backup "$BACKUP_DIR" "direct" "$ssh_key" || return 1
             fi
             
             print_message "Remote backup completed successfully to $BACKUP_DIR" "$GREEN"
             ;;
         *)
             print_message "Invalid choice" "$RED"
-            exit 1
+            return 1
             ;;
     esac
+    return 0
 }
 
 # Function to perform database backup
