@@ -724,6 +724,104 @@ perform_remote_backup() {
     return $?
 }
 
+# Function to perform GitHub backup
+perform_github_backup() {
+    print_message "\nGitHub Backup" "$GREEN"
+    echo "----------------------------------------"
+    
+    # Check for GitHub configuration
+    if [ ! -f "/home/avalanche/.avalanchego/github_backup.conf" ]; then
+        print_message "GitHub backup not configured. Please configure first." "$RED"
+        return 1
+    }
+    
+    # Load GitHub configuration
+    source /home/avalanche/.avalanchego/github_backup.conf
+    
+    if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_REPO" ]; then
+        print_message "Invalid GitHub configuration. Please reconfigure." "$RED"
+        return 1
+    }
+    
+    # Create backup
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_DIR=~/github_backup_${TIMESTAMP}
+    
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR" || {
+        print_message "Failed to create backup directory" "$RED"
+        return 1
+    }
+    
+    # Copy staking files
+    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
+        cp -r /home/avalanche/.avalanchego/staking "$BACKUP_DIR/" || {
+            print_message "Failed to copy staking files" "$RED"
+            return 1
+        }
+    fi
+    
+    # Create metadata file
+    cat > "$BACKUP_DIR/backup_metadata.json" << EOF
+{
+    "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+    "node_type": "$NODE_TYPE",
+    "avalanchego_version": "$(avalanchego --version 2>/dev/null || echo 'unknown')",
+    "backup_type": "github"
+}
+EOF
+    
+    # Clone repository
+    git clone "https://${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git" "$BACKUP_DIR/repo" || {
+        print_message "Failed to clone repository" "$RED"
+        return 1
+    }
+    
+    # Copy backup to repository
+    cp -r "$BACKUP_DIR"/* "$BACKUP_DIR/repo/" || {
+        print_message "Failed to copy backup files to repository" "$RED"
+        return 1
+    }
+    
+    # Configure git
+    cd "$BACKUP_DIR/repo"
+    git config user.email "backup@avalanchenode.local"
+    git config user.name "Avalanche Node Backup"
+    
+    # Commit and push changes
+    git add . || {
+        print_message "Failed to stage files" "$RED"
+        return 1
+    }
+    
+    git commit -m "Backup ${TIMESTAMP}" || {
+        print_message "Failed to commit changes" "$RED"
+        return 1
+    }
+    
+    # Try to push with retries
+    for i in {1..3}; do
+        if git push origin main; then
+            print_message "Backup successfully pushed to GitHub" "$GREEN"
+            break
+        else
+            if [ $i -lt 3 ]; then
+                print_message "Push attempt $i failed. Retrying..." "$YELLOW"
+                sleep 5
+            else
+                print_message "Failed to push backup to GitHub" "$RED"
+                return 1
+            fi
+        fi
+    done
+    
+    # Cleanup
+    cd ~
+    rm -rf "$BACKUP_DIR"
+    
+    return 0
+}
+
 # Main script execution
 main() {
     clear
@@ -814,4 +912,9 @@ display_node_info() {
 if [ "$1" = "--github-backup" ]; then
     perform_github_backup
     exit $?
+fi
+
+# Call main function if no arguments provided
+if [ $# -eq 0 ]; then
+    main
 fi 
