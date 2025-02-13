@@ -1,6 +1,6 @@
 # Avalanche Node Management Script
 
-A comprehensive management script for Avalanche nodes on Ubuntu Server, providing full lifecycle management including deployment, migration, backup, and restore functionality.
+A comprehensive management script for Avalanche nodes on Ubuntu Server, providing full lifecycle management including deployment, backup, and restore functionality.
 
 ## Table of Contents
 1. [Features](#features)
@@ -9,11 +9,10 @@ A comprehensive management script for Avalanche nodes on Ubuntu Server, providin
 4. [Node Types](#node-types)
 5. [Security Guide](#security-guide)
 6. [Backup & Recovery](#backup--recovery)
-7. [Monitoring](#monitoring)
-8. [Operations Guide](#operations-guide)
-9. [Technical Specifications](#technical-specifications)
-10. [Troubleshooting](#troubleshooting)
-11. [Support](#support)
+7. [Operations Guide](#operations-guide)
+8. [Technical Specifications](#technical-specifications)
+9. [Troubleshooting](#troubleshooting)
+10. [Support](#support)
 
 ## Features
 
@@ -23,12 +22,10 @@ A comprehensive management script for Avalanche nodes on Ubuntu Server, providin
 - Secure deployment with hardened defaults
 - Automatic version management
 - Performance optimization
-- Comprehensive backup solutions with GitHub integration
-- Monitoring integration with Prometheus and Grafana
-- Migration support with automatic state preservation
+- Local and remote backup solutions
 - Automatic node detection and configuration
 
-### Installation and Migration
+### Installation Features
 - Official Avalanche installer integration
 - Interactive configuration process
 - Node type-specific optimizations
@@ -52,34 +49,18 @@ A comprehensive management script for Avalanche nodes on Ubuntu Server, providin
   - Cross-node synchronization
   - Bandwidth-optimized transfers
 
-- **GitHub Integration**
-  - Private repository backup
-  - Version-controlled history
-  - Automated daily backups
-  - Easy restoration process
-  - Token-based authentication
-  - Commit signing support
-
-### BLS Key Management
-- Unified key operations
-- Automated backup before operations
-- Secure key generation
-- Version compatibility checks
-- Key rotation support
-- Integrity verification
-
-### Performance Monitoring
-- Real-time metrics collection
-- Custom Grafana dashboards
-- Alert configuration
-- Resource usage tracking
-- Network performance monitoring
-- Blockchain metrics visualization
+### Security Features
+- Automatic firewall configuration
+- Fail2ban integration for public nodes
+- Secure file permissions
+- Regular security updates
+- Access logging
+- Network isolation options
 
 ## Prerequisites
 
 ### System Requirements
-- Ubuntu Server 20.04 LTS or 22.04 LTS
+- Ubuntu Server 20.04 LTS (Focal) or 22.04 LTS (Jammy)
 - Hardware:
   - CPU: 8 cores / 16 threads (AMD Ryzen 7/Intel Xeon)
   - RAM: 16 GB minimum (32 GB recommended)
@@ -94,16 +75,6 @@ A comprehensive management script for Avalanche nodes on Ubuntu Server, providin
   - 9650/tcp: HTTP/HTTPS API
   - 9651/tcp: Staking/P2P
   - 22/tcp: SSH (management)
-- Optional Ports:
-  - 9090/tcp: Prometheus
-  - 3000/tcp: Grafana
-
-### GitHub Backup Prerequisites
-- Private GitHub repository
-- Personal Access Token with repo scope
-- Git installed on node
-- Valid GitHub email for commits
-- Sufficient repository storage
 
 ## Quick Start
 
@@ -119,14 +90,13 @@ chmod +x avalanche-deploy.sh
 sudo ./avalanche-deploy.sh
 ```
 
-### GitHub Backup Setup
+### Backup Operations
 ```bash
 # During script execution, select:
 # 1. Backup Operations
-# 2. Configure GitHub backup
-# 3. Follow prompts for:
-#    - Repository details (username/repo)
-#    - Personal Access Token
+# 2. Choose backup type:
+#    - Node identity files only
+#    - Full database backup
 ```
 
 ## Security Guide
@@ -140,20 +110,11 @@ sudo ./avalanche-deploy.sh
 - Network isolation options
 
 ### Backup Security
-- Secure token storage
+- Secure file storage
 - Access control enforcement
 - Automated cleanup
 - Backup verification
-- Repository privacy enforcement
 - Token rotation support
-
-### Monitoring Security
-- HTTPS enabled endpoints
-- Certificate management
-- Access restrictions
-- Regular auditing
-- Secure dashboards
-- Rate limiting
 
 ## Backup & Recovery
 
@@ -163,30 +124,8 @@ Located in `/home/avalanche/.avalanchego/staking/`:
 - `staker.key`: Node private key
 - `signer.key`: BLS key
 - `.avalanchego/config.json`: Node configuration
-- `.avalanchego/github_backup.conf`: GitHub backup configuration
 
 ### Backup Methods
-
-#### GitHub Backup
-```bash
-# First-time Setup
-1. Select "Configure GitHub backup" from backup menu
-2. Enter repository details (username/repo)
-3. Provide Personal Access Token
-4. Configure automated backups (optional)
-
-# Manual Backup
-Select "Perform GitHub backup" from backup menu
-
-# Automated Backup
-Enabled during configuration (daily backups)
-
-# Restore
-1. Select "Restore from GitHub backup" from backup menu
-2. Choose backup timestamp
-3. Automatic backup of current files
-4. Verification of restored files
-```
 
 #### Local Backup
 ```bash
@@ -230,20 +169,6 @@ sudo journalctl -u avalanchego -n 100
 sudo journalctl -u avalanchego --since '1 hour ago'
 ```
 
-### Monitoring
-- Prometheus metrics collection
-- Grafana dashboards
-- System metrics monitoring
-- Performance tracking
-- Alert configuration
-
-### Maintenance
-- Automated updates
-- Performance optimization
-- Log rotation
-- Backup verification
-- Security auditing
-
 ## Technical Specifications
 
 ### Performance Metrics
@@ -274,25 +199,16 @@ net.core.wmem_max=2500000
    - Verify network connectivity
 
 2. Backup failures
-   - Verify GitHub token validity
-   - Check repository access
-   - Ensure sufficient space
-   - Verify network connection
-   - Check file permissions
-
-3. Migration issues
-   - Backup current deployment
-   - Verify file permissions
-   - Check service configuration
-   - Ensure sufficient resources
-   - Verify network stability
-
-4. Monitoring issues
-   - Check service status
-   - Verify port accessibility
-   - Review certificate validity
    - Check disk space
-   - Verify metrics collection
+   - Verify file permissions
+   - Check network connection
+   - Review error logs
+
+3. Installation issues
+   - Verify Ubuntu version (20.04 or 22.04)
+   - Check system requirements
+   - Review installation logs
+   - Verify network connectivity
 
 ### Debug Commands
 ```bash

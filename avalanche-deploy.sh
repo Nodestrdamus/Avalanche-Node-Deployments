@@ -32,12 +32,14 @@ check_ubuntu_server() {
         exit 1
     fi
     
-    # Check Ubuntu version
-    ubuntu_version=$(lsb_release -rs)
-    if ! [[ "$ubuntu_version" =~ ^(20.04|22.04)$ ]]; then
-        print_message "This script requires Ubuntu Server 20.04 or 22.04 LTS." "$RED"
+    # Check Ubuntu version using release name
+    if ! grep -q "^VERSION_CODENAME=\(focal\|jammy\)$" /etc/os-release; then
+        print_message "This script requires Ubuntu Server 20.04 (Focal) or 22.04 (Jammy) LTS." "$RED"
+        print_message "Current version: $(cat /etc/os-release | grep "PRETTY_NAME" | cut -d'"' -f2)" "$YELLOW"
         exit 1
     fi
+    
+    print_message "Ubuntu Server version check passed" "$GREEN"
 }
 
 # Function to check if running as root
