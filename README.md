@@ -110,7 +110,7 @@ A comprehensive management script for Avalanche nodes on Ubuntu Server, providin
 ### Fresh Installation
 ```bash
 # Download
-wget -O avalanche-deploy.sh https://raw.githubusercontent.com/ava-labs/avalanche-node-deployment/main/avalanche-deploy.sh
+wget -O avalanche-deploy.sh https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanche-deploy.sh
 
 # Make executable
 chmod +x avalanche-deploy.sh

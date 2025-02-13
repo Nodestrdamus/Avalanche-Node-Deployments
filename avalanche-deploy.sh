@@ -32,7 +32,7 @@ configure_network() {
             print_message "Keeping existing configuration" "$YELLOW"
             return
         fi
-    }
+    fi
 
     print_message "\nNetwork Configuration" "$GREEN"
     echo "----------------------------------------"
@@ -181,9 +181,9 @@ install_avalanchego() {
         fi
     fi
     
-    # Download official installer with retry mechanism
+    # Download installer with retry mechanism
     for i in {1..3}; do
-        wget -nd -m https://raw.githubusercontent.com/ava-labs/avalanche-docs/master/scripts/avalanchego-installer.sh && break || {
+        wget -nd -m https://raw.githubusercontent.com/Nodestrdamus/Avalanche-Node-Deployments/main/avalanchego-installer.sh && break || {
             if [ $i -lt 3 ]; then
                 print_message "Download attempt $i failed. Retrying..." "$YELLOW"
                 sleep 5
