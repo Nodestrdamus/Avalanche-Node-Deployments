@@ -474,7 +474,7 @@ perform_restore() {
     if [ ! -d "$backup_dir" ]; then
         print_message "Invalid backup directory" "$RED"
         return 1
-    }
+    fi
     
     # Stop the node
     systemctl stop avalanchego || {
@@ -534,7 +534,7 @@ perform_restore() {
     if ! systemctl is-active --quiet avalanchego; then
         print_message "Failed to restart avalanchego service" "$RED"
         return 1
-    }
+    fi
     
     print_message "Restore completed successfully" "$GREEN"
     return 0
