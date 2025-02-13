@@ -1,27 +1,18 @@
 #!/bin/bash
+#
+# Avalanche Node Deployment Script
+# This script handles installation, configuration, backup, and restore of Avalanche nodes
+#
 
-# Check if running on Ubuntu Server
-check_ubuntu_server() {
-    if ! grep -q "Ubuntu" /etc/os-release; then
-        echo "This script requires Ubuntu Server."
-        exit 1
-    fi
-    
-    # Check Ubuntu version
-    ubuntu_version=$(lsb_release -rs)
-    if ! [[ "$ubuntu_version" =~ ^(20.04|22.04)$ ]]; then
-        echo "This script requires Ubuntu Server 20.04 or 22.04 LTS."
-        exit 1
-    fi
-}
+# Set strict error handling
+set -euo pipefail
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo "Please run as root (use sudo)"
-        exit 1
-    fi
-}
+# Define constants
+AVALANCHE_HOME="/home/avalanche"
+AVALANCHE_CONFIG_DIR="$AVALANCHE_HOME/.avalanchego"
+AVALANCHE_STAKING_DIR="$AVALANCHE_CONFIG_DIR/staking"
+AVALANCHE_DB_DIR="$AVALANCHE_CONFIG_DIR/db"
+SYSTEMD_SERVICE_FILE="/etc/systemd/system/avalanchego.service"
 
 # Colors for output
 RED='\033[0;31m'
@@ -34,7 +25,30 @@ print_message() {
     echo -e "${2}${1}${NC}"
 }
 
-# Function to create avalanche user if it doesn't exist
+# Function to check if running on Ubuntu Server
+check_ubuntu_server() {
+    if ! grep -q "Ubuntu" /etc/os-release; then
+        print_message "This script requires Ubuntu Server." "$RED"
+        exit 1
+    fi
+    
+    # Check Ubuntu version
+    ubuntu_version=$(lsb_release -rs)
+    if ! [[ "$ubuntu_version" =~ ^(20.04|22.04)$ ]]; then
+        print_message "This script requires Ubuntu Server 20.04 or 22.04 LTS." "$RED"
+        exit 1
+    fi
+}
+
+# Function to check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        print_message "Please run as root (use sudo)" "$RED"
+        exit 1
+    fi
+}
+
+# Function to create avalanche user
 create_avalanche_user() {
     if ! id -u avalanche >/dev/null 2>&1; then
         useradd -m -s /bin/bash avalanche || {
@@ -78,7 +92,7 @@ get_public_ip() {
 # Function to configure network environment
 configure_network() {
     # Check for existing configuration
-    if [ -f "/home/avalanche/.avalanchego/config.json" ]; then
+    if [ -f "$AVALANCHE_CONFIG_DIR/config.json" ]; then
         read -p "Existing configuration found. Override? [y/n]: " override
         if [ "$override" != "y" ]; then
             print_message "Keeping existing configuration" "$YELLOW"
@@ -137,8 +151,8 @@ configure_network() {
     fi
 
     # Save configuration
-    mkdir -p /home/avalanche/.avalanchego
-    cat > /home/avalanche/.avalanchego/config.json << EOF
+    mkdir -p $AVALANCHE_CONFIG_DIR
+    cat > $AVALANCHE_CONFIG_DIR/config.json << EOF
 {
     "network_type": "$connection_type",
     "node_ip": "$NODE_IP",
@@ -191,7 +205,7 @@ create_systemd_service() {
     fi
 
     # Create systemd service with proper security settings
-    cat > /etc/systemd/system/avalanchego.service << EOF
+    cat > $SYSTEMD_SERVICE_FILE << EOF
 [Unit]
 Description=AvalancheGo systemd service
 After=network.target
@@ -201,8 +215,8 @@ StartLimitIntervalSec=0
 Type=simple
 User=avalanche
 Group=avalanche
-WorkingDirectory=/home/avalanche
-ExecStart=/home/avalanche/avalanchego/avalanchego $extra_args
+WorkingDirectory=$AVALANCHE_HOME
+ExecStart=$AVALANCHE_HOME/avalanchego/avalanchego $extra_args
 LimitNOFILE=32768
 Restart=always
 RestartSec=1
@@ -224,16 +238,16 @@ WantedBy=multi-user.target
 EOF
 
     # Set proper permissions
-    chown root:root /etc/systemd/system/avalanchego.service
-    chmod 644 /etc/systemd/system/avalanchego.service
+    chown root:root $SYSTEMD_SERVICE_FILE
+    chmod 644 $SYSTEMD_SERVICE_FILE
 
     # Create and set permissions for required directories
-    mkdir -p /home/avalanche/.avalanchego
-    mkdir -p /home/avalanche/avalanchego
-    chown -R avalanche:avalanche /home/avalanche/.avalanchego
-    chown -R avalanche:avalanche /home/avalanche/avalanchego
-    chmod 750 /home/avalanche/.avalanchego
-    chmod 750 /home/avalanche/avalanchego
+    mkdir -p $AVALANCHE_CONFIG_DIR
+    mkdir -p $AVALANCHE_HOME/avalanchego
+    chown -R avalanche:avalanche $AVALANCHE_CONFIG_DIR
+    chown -R avalanche:avalanche $AVALANCHE_HOME/avalanchego
+    chmod 750 $AVALANCHE_CONFIG_DIR
+    chmod 750 $AVALANCHE_HOME/avalanchego
 
     systemctl daemon-reload
     systemctl enable avalanchego
@@ -244,7 +258,7 @@ install_avalanchego() {
     print_message "Installing AvalancheGo..." "$YELLOW"
     
     # Check if already installed
-    if [ -d "/home/avalanche/.avalanchego" ]; then
+    if [ -d "$AVALANCHE_CONFIG_DIR" ]; then
         print_message "AvalancheGo installation detected. Checking version..." "$YELLOW"
         current_version=$(avalanchego --version 2>/dev/null | grep -oP 'avalanchego/[0-9]+\.[0-9]+\.[0-9]+' | cut -d'/' -f2)
         latest_version=$(curl -s https://api.github.com/repos/ava-labs/avalanchego/releases/latest | grep -oP '"tag_name": "v\K[^"]*')
@@ -327,20 +341,20 @@ configure_security() {
     print_message "Configuring security settings..." "$YELLOW"
     
     # Set proper file permissions for staking files
-    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
+    if [ -d "$AVALANCHE_STAKING_DIR" ]; then
         # Ensure directory exists with proper permissions
-        mkdir -p /home/avalanche/.avalanchego/staking
-        chown -R avalanche:avalanche /home/avalanche/.avalanchego/staking
-        chmod 700 /home/avalanche/.avalanchego/staking || {
+        mkdir -p $AVALANCHE_STAKING_DIR
+        chown -R avalanche:avalanche $AVALANCHE_STAKING_DIR
+        chmod 700 $AVALANCHE_STAKING_DIR || {
             print_message "Failed to set staking directory permissions" "$RED"
             exit 1
         }
         
         # Set permissions for key files if they exist
         for file in staker.key staker.crt signer.key; do
-            if [ -f "/home/avalanche/.avalanchego/staking/$file" ]; then
-                chown avalanche:avalanche "/home/avalanche/.avalanchego/staking/$file"
-                chmod 600 "/home/avalanche/.avalanchego/staking/$file" || {
+            if [ -f "$AVALANCHE_STAKING_DIR/$file" ]; then
+                chown avalanche:avalanche "$AVALANCHE_STAKING_DIR/$file"
+                chmod 600 "$AVALANCHE_STAKING_DIR/$file" || {
                     print_message "Failed to set $file permissions" "$RED"
                     exit 1
                 }
@@ -408,7 +422,7 @@ perform_backup() {
     # Create timestamped backup directory
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     BACKUP_DIR=~/avalanche_backup/${TIMESTAMP}
-    mkdir -p $BACKUP_DIR || {
+    mkdir -p "$BACKUP_DIR" || {
         print_message "Failed to create backup directory" "$RED"
         return 1
     }
@@ -418,9 +432,15 @@ perform_backup() {
     echo "2) Full database backup"
     read -p "Enter choice (1-2): " backup_type
 
+    # Validate input
+    if [[ ! "$backup_type" =~ ^[1-2]$ ]]; then
+        print_message "Invalid choice" "$RED"
+        return 1
+    fi
+
     # Backup staking files
-    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
-        cp -r /home/avalanche/.avalanchego/staking $BACKUP_DIR/ || {
+    if [ -d "$AVALANCHE_STAKING_DIR" ]; then
+        cp -r "$AVALANCHE_STAKING_DIR" "$BACKUP_DIR/" || {
             print_message "Failed to copy staking files" "$RED"
             return 1
         }
@@ -440,8 +460,8 @@ perform_backup() {
         }
         
         # Create database backup
-        if [ -d "/home/avalanche/.avalanchego/db" ]; then
-            tar czf "$BACKUP_DIR/db_backup.tar.gz" -C /home/avalanche/.avalanchego db || {
+        if [ -d "$AVALANCHE_DB_DIR" ]; then
+            tar czf "$BACKUP_DIR/db_backup.tar.gz" -C "$AVALANCHE_CONFIG_DIR" db || {
                 print_message "Failed to create database archive" "$RED"
                 systemctl start avalanchego
                 return 1
@@ -456,7 +476,7 @@ perform_backup() {
         if ! systemctl is-active --quiet avalanchego; then
             print_message "Failed to restart avalanchego service" "$RED"
             return 1
-        }
+        fi
     fi
     
     print_message "Backup completed successfully to $BACKUP_DIR" "$GREEN"
@@ -471,8 +491,9 @@ perform_restore() {
     # Select backup directory
     read -p "Enter backup directory path: " backup_dir
     
-    if [ ! -d "$backup_dir" ]; then
-        print_message "Invalid backup directory" "$RED"
+    # Check if backup directory exists and is readable
+    if [ ! -d "$backup_dir" ] || [ ! -r "$backup_dir" ]; then
+        print_message "Invalid or unreadable backup directory" "$RED"
         return 1
     fi
     
@@ -482,9 +503,14 @@ perform_restore() {
         return 1
     }
     
+    # Create backup of current files
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    CURRENT_BACKUP_DIR="$AVALANCHE_CONFIG_DIR/backup_before_restore_${TIMESTAMP}"
+    mkdir -p "$CURRENT_BACKUP_DIR"
+    
     # Backup existing files before restore
-    if [ -d "/home/avalanche/.avalanchego/staking" ]; then
-        mv /home/avalanche/.avalanchego/staking /home/avalanche/.avalanchego/staking-old || {
+    if [ -d "$AVALANCHE_STAKING_DIR" ]; then
+        mv "$AVALANCHE_STAKING_DIR" "$CURRENT_BACKUP_DIR/staking" || {
             print_message "Failed to backup existing staking files" "$RED"
             systemctl start avalanchego
             return 1
@@ -493,7 +519,8 @@ perform_restore() {
     
     # Restore staking files
     if [ -d "$backup_dir/staking" ]; then
-        cp -r "$backup_dir/staking" /home/avalanche/.avalanchego/ || {
+        mkdir -p "$AVALANCHE_STAKING_DIR"
+        cp -r "$backup_dir/staking/." "$AVALANCHE_STAKING_DIR/" || {
             print_message "Failed to restore staking files" "$RED"
             systemctl start avalanchego
             return 1
@@ -505,8 +532,8 @@ perform_restore() {
         print_message "Restoring database..." "$YELLOW"
         
         # Backup existing database
-        if [ -d "/home/avalanche/.avalanchego/db" ]; then
-            mv /home/avalanche/.avalanchego/db /home/avalanche/.avalanchego/db-old || {
+        if [ -d "$AVALANCHE_DB_DIR" ]; then
+            mv "$AVALANCHE_DB_DIR" "$CURRENT_BACKUP_DIR/db" || {
                 print_message "Failed to backup existing database" "$RED"
                 systemctl start avalanchego
                 return 1
@@ -514,7 +541,8 @@ perform_restore() {
         fi
         
         # Extract database backup
-        tar xzf "$backup_dir/db_backup.tar.gz" -C /home/avalanche/.avalanchego/ || {
+        mkdir -p "$AVALANCHE_CONFIG_DIR"
+        tar xzf "$backup_dir/db_backup.tar.gz" -C "$AVALANCHE_CONFIG_DIR/" || {
             print_message "Failed to restore database" "$RED"
             systemctl start avalanchego
             return 1
@@ -522,9 +550,9 @@ perform_restore() {
     fi
     
     # Fix permissions
-    chown -R avalanche:avalanche /home/avalanche/.avalanchego
-    chmod 700 /home/avalanche/.avalanchego/staking
-    chmod 600 /home/avalanche/.avalanchego/staking/*
+    chown -R avalanche:avalanche "$AVALANCHE_CONFIG_DIR"
+    chmod 700 "$AVALANCHE_STAKING_DIR"
+    chmod 600 "$AVALANCHE_STAKING_DIR"/*
     
     # Start the node
     systemctl start avalanchego
@@ -537,6 +565,7 @@ perform_restore() {
     fi
     
     print_message "Restore completed successfully" "$GREEN"
+    print_message "Previous files backed up to: $CURRENT_BACKUP_DIR" "$YELLOW"
     return 0
 }
 
@@ -545,15 +574,15 @@ detect_existing_deployment() {
     print_message "Checking for existing Avalanche deployment..." "$YELLOW"
     
     # Check for common installation paths and files
-    if [ -d "/home/avalanche/.avalanchego" ] || [ -d "/home/avalanche/avalanchego" ] || [ -f "/etc/systemd/system/avalanchego.service" ]; then
+    if [ -d "$AVALANCHE_CONFIG_DIR" ] || [ -d "$AVALANCHE_HOME/avalanchego" ] || [ -f "$SYSTEMD_SERVICE_FILE" ]; then
         print_message "Existing Avalanche deployment detected!" "$YELLOW"
         
         echo "----------------------------------------"
         echo "Deployment Details:"
         
         # Display current configuration
-        if [ -f "/home/avalanche/.avalanchego/config.json" ]; then
-            source /home/avalanche/.avalanchego/config.json
+        if [ -f "$AVALANCHE_CONFIG_DIR/config.json" ]; then
+            source $AVALANCHE_CONFIG_DIR/config.json
             print_message "Node Type: $NODE_TYPE" "$YELLOW"
             print_message "RPC Access: $RPC_ACCESS" "$YELLOW"
             print_message "State Sync: $STATE_SYNC" "$YELLOW"
@@ -667,9 +696,9 @@ display_node_info() {
     
     print_message "\nNode Configuration:" "$GREEN"
     echo "----------------------------------------"
-    print_message "Config directory:     /home/avalanche/.avalanchego" "$YELLOW"
-    print_message "Binary location:      /home/avalanche/avalanchego/avalanchego" "$YELLOW"
-    print_message "Service file:         /etc/systemd/system/avalanchego.service" "$YELLOW"
+    print_message "Config directory:     $AVALANCHE_CONFIG_DIR" "$YELLOW"
+    print_message "Binary location:      $AVALANCHE_HOME/avalanchego/avalanchego" "$YELLOW"
+    print_message "Service file:         $SYSTEMD_SERVICE_FILE" "$YELLOW"
     
     if [ "$RPC_ACCESS" = "public" ]; then
         print_message "\nRPC Endpoints:" "$GREEN"
@@ -681,7 +710,7 @@ display_node_info() {
     print_message "\nImportant Backup Information:" "$GREEN"
     echo "----------------------------------------"
     print_message "Your node's identity is defined by these critical files:" "$YELLOW"
-    print_message "Location: /home/avalanche/.avalanchego/staking/" "$YELLOW"
+    print_message "Location: $AVALANCHE_STAKING_DIR/" "$YELLOW"
     print_message "Files to backup:" "$YELLOW"
     print_message "  - staker.crt  (Node certificate)" "$YELLOW"
     print_message "  - staker.key  (Node private key)" "$YELLOW"
