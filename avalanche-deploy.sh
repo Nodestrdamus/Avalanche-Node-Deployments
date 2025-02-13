@@ -594,57 +594,240 @@ perform_db_restore() {
     return 0
 }
 
-# Function to perform restore
-perform_restore() {
-    print_message "\nAvalanche Node Restore" "$GREEN"
+# Function to detect existing deployment
+detect_existing_deployment() {
+    print_message "Checking for existing Avalanche deployment..." "$YELLOW"
+    
+    local EXISTING_DEPLOYMENT=false
+    local MANAGED_BY_SCRIPT=false
+    local NEEDS_MIGRATION=false
+    
+    # Check for common installation paths and files
+    local CHECK_PATHS=(
+        "/home/avalanche/.avalanchego"
+        "/home/avalanche/avalanchego"
+        "/home/avalanche/.avalanchego/staking"
+        "/etc/systemd/system/avalanchego.service"
+    )
+    
+    for path in "${CHECK_PATHS[@]}"; do
+        if [ -e "$path" ]; then
+            EXISTING_DEPLOYMENT=true
+            break
+        fi
+    done
+    
+    if [ "$EXISTING_DEPLOYMENT" = true ]; then
+        print_message "Existing Avalanche deployment detected!" "$YELLOW"
+        
+        # Check if it was deployed by this script
+        if grep -q "# Managed by avalanche-deploy.sh" /etc/systemd/system/avalanchego.service 2>/dev/null; then
+            MANAGED_BY_SCRIPT=true
+        fi
+        
+        echo "----------------------------------------"
+        echo "Deployment Details:"
+        
+        # Display current configuration
+        print_message "Node Type: $NODE_TYPE" "$YELLOW"
+        print_message "RPC Access: $RPC_ACCESS" "$YELLOW"
+        print_message "State Sync: $STATE_SYNC" "$YELLOW"
+        
+        # Check service status
+        if systemctl is-active --quiet avalanchego; then
+            print_message "Service Status: Running" "$GREEN"
+        else
+            print_message "Service Status: Not Running" "$RED"
+        fi
+        
+        echo "----------------------------------------"
+        if [ "$MANAGED_BY_SCRIPT" = true ]; then
+            print_message "This deployment was managed by avalanche-deploy.sh" "$GREEN"
+        else
+            print_message "This appears to be a manual or third-party deployment" "$YELLOW"
+            NEEDS_MIGRATION=true
+        fi
+        
+        if [ "$NEEDS_MIGRATION" = true ]; then
+            print_message "\nThis deployment needs migration to be fully managed by this script" "$YELLOW"
+            print_message "Migration will:" "$YELLOW"
+            echo "1. Backup all existing files"
+            echo "2. Update service configuration"
+            echo "3. Fix file permissions"
+            echo "4. Add monitoring capabilities"
+            echo "5. Enable script management"
+        fi
+        
+        echo "----------------------------------------"
+        echo "Available Actions:"
+        echo "B) Backup existing deployment"
+        echo "M) Migrate to script management"
+        echo "U) Upgrade node"
+        echo "C) Cancel"
+        read -p "Select action [B/M/U/C]: " action
+        case $action in
+            [Bb])
+                print_message "Backing up existing deployment..." "$YELLOW"
+                perform_backup
+                ;;
+            [Mm])
+                if systemctl is-active --quiet avalanchego; then
+                    print_message "Please stop the node before migration" "$RED"
+                    read -p "Stop node now? [y/n]: " stop_node
+                    if [ "$stop_node" = "y" ]; then
+                        systemctl stop avalanchego
+                    else
+                        exit 1
+                    fi
+                fi
+                
+                print_message "Starting migration process..." "$YELLOW"
+                perform_backup
+                configure_node
+                configure_security
+                print_message "Migration completed successfully" "$GREEN"
+                ;;
+            [Uu])
+                print_message "Proceeding with upgrade..." "$YELLOW"
+                install_avalanchego
+                ;;
+            *)
+                print_message "Operation cancelled by user" "$YELLOW"
+                exit 1
+                ;;
+        esac
+    fi
+    
+    return 0
+}
+
+# Main script
+main() {
+    clear
+    
+    # Run initial checks
+    check_ubuntu_server
+    check_root
+    
+    # Create avalanche user
+    create_avalanche_user
+    
+    # Install dependencies
+    install_dependencies
+    
+    # Detect existing deployment
+    detect_existing_deployment
+    
+    # Configure network
+    configure_network
+    
+    # Install AvalancheGo
+    install_avalanchego
+    
+    # Configure node
+    configure_node
+    
+    # Configure security
+    configure_security
+    
+    # Start service
+    systemctl start avalanchego
+    
+    print_message "\nInstallation Complete!" "$GREEN"
     echo "----------------------------------------"
     
-    echo "Select restore type:"
-    echo "1) Local restore"
-    echo "2) Remote restore (using scp)"
-    read -p "Enter choice (1-2): " restore_choice
+    # Display node information and commands
+    display_node_info
+}
 
-    if [ ! -d "~/avalanche_backup" ]; then
-        print_message "Error: Backup directory not found at ~/avalanche_backup" "$RED"
-        exit 1
+# Function to display node information
+display_node_info() {
+    # Wait for node to start and get NodeID
+    sleep 10
+    NODE_ID=$(journalctl -u avalanchego | grep "NodeID" | tail -n 1 | grep -oP "NodeID-\K[a-zA-Z0-9]+")
+    if [ -n "$NODE_ID" ]; then
+        print_message "\nNode Information:" "$GREEN"
+        print_message "NodeID: NodeID-$NODE_ID" "$YELLOW"
     fi
+    
+    print_message "\nNode Management Commands:" "$GREEN"
+    echo "----------------------------------------"
+    print_message "Start node:   sudo systemctl start avalanchego" "$YELLOW"
+    print_message "Stop node:    sudo systemctl stop avalanchego" "$YELLOW"
+    print_message "Restart node: sudo systemctl restart avalanchego" "$YELLOW"
+    print_message "Node status:  sudo systemctl status avalanchego" "$YELLOW"
+    
+    print_message "\nMonitoring Commands:" "$GREEN"
+    echo "----------------------------------------"
+    print_message "View all logs:        sudo journalctl -u avalanchego" "$YELLOW"
+    print_message "Follow live logs:     sudo journalctl -u avalanchego -f" "$YELLOW"
+    print_message "View recent logs:     sudo journalctl -u avalanchego -n 100" "$YELLOW"
+    print_message "View logs by time:    sudo journalctl -u avalanchego --since '1 hour ago'" "$YELLOW"
+    
+    print_message "\nNode Configuration:" "$GREEN"
+    echo "----------------------------------------"
+    print_message "Config directory:     /home/avalanche/.avalanchego" "$YELLOW"
+    print_message "Binary location:      /home/avalanche/avalanchego/avalanchego" "$YELLOW"
+    print_message "Service file:         /etc/systemd/system/avalanchego.service" "$YELLOW"
+    
+    if [ "$RPC_ACCESS" = "public" ]; then
+        print_message "\nRPC Endpoints:" "$GREEN"
+        echo "----------------------------------------"
+        print_message "HTTP RPC:     http://$NODE_IP:9650" "$YELLOW"
+        print_message "Staking Port: :9651" "$YELLOW"
+    fi
+    
+    print_message "\nImportant Backup Information:" "$GREEN"
+    echo "----------------------------------------"
+    print_message "Your node's identity is defined by these critical files:" "$YELLOW"
+    print_message "Location: /home/avalanche/.avalanchego/staking/" "$YELLOW"
+    print_message "Files to backup:" "$YELLOW"
+    print_message "  - staker.crt  (Node certificate)" "$YELLOW"
+    print_message "  - staker.key  (Node private key)" "$YELLOW"
+    print_message "  - signer.key  (BLS key)" "$YELLOW"
+}
 
-    case $restore_choice in
-        1)
-            print_message "Stopping avalanchego service..." "$YELLOW"
-            systemctl stop avalanchego
-            
-            print_message "Restoring node files..." "$YELLOW"
-            mkdir -p /home/avalanche/.avalanchego/staking
-            cp ~/avalanche_backup/staking/{staker.key,staker.crt,signer.key} /home/avalanche/.avalanchego/staking/
-            chown -R avalanche:avalanche /home/avalanche/.avalanchego/staking
-            
-            print_message "Starting avalanchego service..." "$YELLOW"
-            systemctl start avalanchego
-            print_message "Restore completed successfully" "$GREEN"
-            ;;
-        2)
-            read -p "Enter target node IP address: " target_ip
-            read -p "Enter target username (default: ubuntu): " target_user
-            target_user=${target_user:-ubuntu}
-            
-            print_message "Attempting remote restore..." "$YELLOW"
-            ssh ${target_user}@${target_ip} "sudo systemctl stop avalanchego"
-            scp ~/avalanche_backup/staking/{staker.key,staker.crt,signer.key} ${target_user}@${target_ip}:/home/avalanche/.avalanchego/staking/
-            ssh ${target_user}@${target_ip} "sudo chown -R avalanche:avalanche /home/avalanche/.avalanchego/staking && sudo systemctl start avalanchego"
-            
-            if [ $? -eq 0 ]; then
-                print_message "Remote restore completed successfully" "$GREEN"
+# Run main script
+main
+
+# Function to analyze existing service configuration
+analyze_service_config() {
+    local service_file="/etc/systemd/system/avalanchego.service"
+    local config_found=false
+    local rpc_access="private"
+    local state_sync="on"
+    local node_type="validator"
+    
+    if [ -f "$service_file" ]; then
+        # Extract existing configuration from service file
+        local exec_line=$(grep "^ExecStart=" "$service_file")
+        
+        # Determine node type based on configuration
+        if echo "$exec_line" | grep -q "index-enabled=true"; then
+            if echo "$exec_line" | grep -q "state-sync-disabled=true"; then
+                node_type="archive"
             else
-                print_message "Error: Remote restore failed" "$RED"
-                exit 1
+                node_type="api"
             fi
-            ;;
-        *)
-            print_message "Invalid choice" "$RED"
-            exit 1
-            ;;
-    esac
+        fi
+        
+        # Determine RPC access
+        if echo "$exec_line" | grep -q "http.addr=0.0.0.0"; then
+            rpc_access="public"
+        fi
+        
+        # Check state sync
+        if echo "$exec_line" | grep -q "state-sync-disabled=true"; then
+            state_sync="off"
+        fi
+        
+        config_found=true
+    fi
+    
+    echo "NODE_TYPE=$node_type"
+    echo "RPC_ACCESS=$rpc_access"
+    echo "STATE_SYNC=$state_sync"
+    echo "CONFIG_FOUND=$config_found"
 }
 
 # Function to check version compatibility
@@ -1090,290 +1273,7 @@ analyze_service_config() {
     echo "CONFIG_FOUND=$config_found"
 }
 
-# Function to detect existing Avalanche deployment
-detect_existing_deployment() {
-    print_message "Checking for existing Avalanche deployment..." "$YELLOW"
-    
-    local EXISTING_DEPLOYMENT=false
-    local MANAGED_BY_SCRIPT=false
-    local NEEDS_MIGRATION=false
-    
-    # Check for common installation paths and files
-    local CHECK_PATHS=(
-        "/home/avalanche/.avalanchego"
-        "/home/avalanche/avalanchego"
-        "/home/avalanche/.avalanchego/staking"
-        "/etc/systemd/system/avalanchego.service"
-    )
-    
-    for path in "${CHECK_PATHS[@]}"; do
-        if [ -e "$path" ]; then
-            EXISTING_DEPLOYMENT=true
-            break
-        fi
-    done
-    
-    if [ "$EXISTING_DEPLOYMENT" = true ]; then
-        print_message "Existing Avalanche deployment detected!" "$YELLOW"
-        
-        # Check if it was deployed by this script
-        if grep -q "# Managed by avalanche-deploy.sh" /etc/systemd/system/avalanchego.service 2>/dev/null; then
-            MANAGED_BY_SCRIPT=true
-        fi
-        
-        echo "----------------------------------------"
-        echo "Deployment Details:"
-        
-        # Analyze existing configuration
-        eval $(analyze_service_config)
-        
-        # Display current configuration
-        print_message "Node Type: $NODE_TYPE" "$YELLOW"
-        print_message "RPC Access: $RPC_ACCESS" "$YELLOW"
-        print_message "State Sync: $STATE_SYNC" "$YELLOW"
-        
-        # Check service status
-        if systemctl is-active --quiet avalanchego; then
-            print_message "Service Status: Running" "$GREEN"
-            
-            # Check version if node is running
-            VERSION_RESPONSE=$(curl -s -X POST --data '{
-                "jsonrpc":"2.0",
-                "id"     :1,
-                "method" :"info.getNodeVersion"
-            }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info)
-            
-            if [ $? -eq 0 ]; then
-                VERSION=$(echo "$VERSION_RESPONSE" | grep -oP 'avalanchego/\K[0-9]+\.[0-9]+\.[0-9]+' || echo "Unknown")
-                print_message "AvalancheGo Version: $VERSION" "$YELLOW"
-            fi
-            
-            # Check if node is bootstrapped
-            BOOTSTRAP_RESPONSE=$(curl -s -X POST --data '{
-                "jsonrpc":"2.0",
-                "id"     :1,
-                "method" :"info.isBootstrapped",
-                "params": {"chain": "P"}
-            }' -H 'content-type:application/json;' 127.0.0.1:9650/ext/info)
-            
-            if echo "$BOOTSTRAP_RESPONSE" | grep -q '"result":true'; then
-                print_message "Bootstrap Status: Complete" "$GREEN"
-            else
-                print_message "Bootstrap Status: In Progress" "$YELLOW"
-            fi
-        else
-            print_message "Service Status: Not Running" "$RED"
-        fi
-        
-        # Check installation paths and files
-        if [ -d "/home/avalanche/.avalanchego" ]; then
-            print_message "Config Directory: Present" "$GREEN"
-            
-            # Check staking files
-            if [ -d "/home/avalanche/.avalanchego/staking" ]; then
-                local STAKING_FILES=("staker.key" "staker.crt" "signer.key")
-                local MISSING_FILES=()
-                
-                for file in "${STAKING_FILES[@]}"; do
-                    if [ ! -f "/home/avalanche/.avalanchego/staking/$file" ]; then
-                        MISSING_FILES+=("$file")
-                    fi
-                done
-                
-                if [ ${#MISSING_FILES[@]} -eq 0 ]; then
-                    print_message "Staking Files: All Present" "$GREEN"
-                else
-                    print_message "Staking Files: Missing ${MISSING_FILES[*]}" "$RED"
-                fi
-                
-                # Check file permissions
-                local PERMISSION_ISSUES=false
-                for file in "${STAKING_FILES[@]}"; do
-                    if [ -f "/home/avalanche/.avalanchego/staking/$file" ]; then
-                        if [ "$(stat -c %a /home/avalanche/.avalanchego/staking/$file)" != "600" ]; then
-                            PERMISSION_ISSUES=true
-                            break
-                        fi
-                    fi
-                done
-                
-                if [ "$PERMISSION_ISSUES" = true ]; then
-                    print_message "File Permissions: Need Update" "$YELLOW"
-                    NEEDS_MIGRATION=true
-                else
-                    print_message "File Permissions: Correct" "$GREEN"
-                fi
-            fi
-        fi
-        
-        echo "----------------------------------------"
-        if [ "$MANAGED_BY_SCRIPT" = true ]; then
-            print_message "This deployment was managed by avalanche-deploy.sh" "$GREEN"
-        else
-            print_message "This appears to be a manual or third-party deployment" "$YELLOW"
-            NEEDS_MIGRATION=true
-        fi
-        
-        if [ "$NEEDS_MIGRATION" = true ]; then
-            print_message "\nThis deployment needs migration to be fully managed by this script" "$YELLOW"
-            print_message "Migration will:" "$YELLOW"
-            echo "1. Backup all existing files"
-            echo "2. Update service configuration"
-            echo "3. Fix file permissions"
-            echo "4. Add monitoring capabilities"
-            echo "5. Enable script management"
-        fi
-        
-        echo "----------------------------------------"
-        echo "Available Actions:"
-        echo "B) Backup existing deployment"
-        echo "M) Migrate to script management"
-        echo "U) Upgrade node"
-        echo "C) Cancel"
-        read -p "Select action [B/M/U/C]: " action
-        case $action in
-            [Bb])
-                print_message "Backing up existing deployment..." "$YELLOW"
-                perform_backup
-                ;;
-            [Mm])
-                if systemctl is-active --quiet avalanchego; then
-                    print_message "Please stop the node before migration" "$RED"
-                    read -p "Stop node now? [y/n]: " stop_node
-                    if [ "$stop_node" = "y" ]; then
-                        systemctl stop avalanchego
-                    else
-                        exit 1
-                    fi
-                fi
-                
-                print_message "Starting migration process..." "$YELLOW"
-                # Backup first
-                perform_backup
-                
-                # Update service file
-                create_systemd_service "--http.addr=${RPC_ACCESS} --state-sync-disabled=${STATE_SYNC}"
-                
-                # Fix permissions
-                configure_security
-                
-                # Add monitoring if needed
-                read -p "Would you like to add monitoring capabilities? [y/n]: " add_monitoring
-                if [ "$add_monitoring" = "y" ]; then
-                    setup_monitoring
-                fi
-                
-                print_message "Migration completed successfully" "$GREEN"
-                ;;
-            [Uu])
-                if [ "$MANAGED_BY_SCRIPT" = true ]; then
-                    print_message "Proceeding with upgrade..." "$GREEN"
-                    return 0
-                else
-                    print_message "Warning: Upgrading a non-script deployment may cause issues." "$RED"
-                    print_message "Consider migrating to script management first (Option M)" "$YELLOW"
-                    read -p "Are you sure you want to proceed with upgrade? [y/n]: " confirm
-                    if [ "$confirm" = "y" ]; then
-                        return 0
-                    else
-                        exit 1
-                    fi
-                fi
-                ;;
-            *)
-                print_message "Operation cancelled by user" "$YELLOW"
-                exit 1
-                ;;
-        esac
-    fi
-    
-    return 0
-}
-
-# Update main script to include detection
-# Main script
-clear
-
-# Add detection before menu
-detect_existing_deployment
-
-update_main_menu
-
-# Start service
-systemctl start avalanchego
-
-print_message "\nInstallation Complete!" "$GREEN"
-echo "----------------------------------------"
-
-# Wait for node to start and get NodeID
-sleep 10
-NODE_ID=$(journalctl -u avalanchego | grep "NodeID" | tail -n 1 | grep -oP "NodeID-\K[a-zA-Z0-9]+")
-if [ ! -z "$NODE_ID" ]; then
-    print_message "\nNode Information:" "$GREEN"
-    print_message "NodeID: NodeID-$NODE_ID" "$YELLOW"
-fi
-
-print_message "\nNode Management Commands:" "$GREEN"
-echo "----------------------------------------"
-print_message "Start node:   sudo systemctl start avalanchego" "$YELLOW"
-print_message "Stop node:    sudo systemctl stop avalanchego" "$YELLOW"
-print_message "Restart node: sudo systemctl restart avalanchego" "$YELLOW"
-print_message "Node status:  sudo systemctl status avalanchego" "$YELLOW"
-
-print_message "\nMonitoring Commands:" "$GREEN"
-echo "----------------------------------------"
-print_message "View all logs:        sudo journalctl -u avalanchego" "$YELLOW"
-print_message "Follow live logs:     sudo journalctl -u avalanchego -f" "$YELLOW"
-print_message "View recent logs:     sudo journalctl -u avalanchego -n 100" "$YELLOW"
-print_message "View logs by time:    sudo journalctl -u avalanchego --since '1 hour ago'" "$YELLOW"
-
-print_message "\nNode Configuration:" "$GREEN"
-echo "----------------------------------------"
-print_message "Config directory:     /home/avalanche/.avalanchego" "$YELLOW"
-print_message "Binary location:      /home/avalanche/avalanchego/avalanchego" "$YELLOW"
-print_message "Service file:         /etc/systemd/system/avalanchego.service" "$YELLOW"
-
-if [ "$RPC_ACCESS" = "public" ]; then
-    print_message "\nRPC Endpoints:" "$GREEN"
-    echo "----------------------------------------"
-    print_message "HTTP RPC:     http://$NODE_IP:9650" "$YELLOW"
-    print_message "Staking Port: :9651" "$YELLOW"
-fi
-
-print_message "\nImportant Backup Information:" "$GREEN"
-echo "----------------------------------------"
-print_message "Your node's identity is defined by these critical files:" "$YELLOW"
-print_message "Location: /home/avalanche/.avalanchego/staking/" "$YELLOW"
-print_message "Files to backup:" "$YELLOW"
-print_message "  - staker.crt  (Node certificate)" "$YELLOW"
-print_message "  - staker.key  (Node private key)" "$YELLOW"
-print_message "  - signer.key  (BLS key)" "$YELLOW"
-
-print_message "\nTo backup these files:" "$GREEN"
-print_message "From local machine:" "$YELLOW"
-print_message "mkdir -p ~/avalanche_backup" "$YELLOW"
-print_message "cp /home/avalanche/.avalanchego/staking/{staker.key,staker.crt,signer.key} ~/avalanche_backup/" "$YELLOW"
-
-print_message "\nFrom remote machine using scp:" "$YELLOW"
-print_message "mkdir -p ~/avalanche_backup" "$YELLOW"
-print_message "scp -r ubuntu@${NODE_IP}:/home/avalanche/.avalanchego/staking ~/avalanche_backup" "$YELLOW"
-
-print_message "\nTo restore these files:" "$GREEN"
-print_message "1. Stop the node:     sudo systemctl stop avalanchego" "$YELLOW"
-print_message "2. Copy files back:" "$YELLOW"
-print_message "   Local:  cp ~/avalanche_backup/{staker.key,staker.crt,signer.key} /home/avalanche/.avalanchego/staking/" "$YELLOW"
-print_message "   Remote: scp ~/avalanche_backup/{staker.key,staker.crt,signer.key} ubuntu@NEW_IP:/home/avalanche/.avalanchego/staking/" "$YELLOW"
-print_message "3. Start the node:    sudo systemctl start avalanchego" "$YELLOW"
-
-print_message "\nWARNING:" "$RED"
-print_message "- Keep these files private and secure" "$YELLOW"
-print_message "- Never run two nodes with the same staker files" "$YELLOW"
-print_message "- Loss of these files means loss of node identity" "$YELLOW"
-print_message "- Compromised files could affect staking rewards" "$YELLOW"
-
-print_message "\nNode successfully deployed! ��" "$GREEN"
-exit 0
-
+# Function to check monitoring prerequisites
 check_monitoring_prerequisites() {
     print_message "Checking monitoring prerequisites..." "$YELLOW"
     
@@ -1416,6 +1316,7 @@ check_monitoring_prerequisites() {
     return 0
 }
 
+# Function to configure monitoring security
 configure_monitoring_security() {
     print_message "Configuring monitoring security..." "$YELLOW"
     
@@ -1455,6 +1356,7 @@ EOF
     return 0
 }
 
+# Function to check performance baseline
 check_performance_baseline() {
     print_message "Checking system performance baseline..." "$YELLOW"
     
@@ -1492,6 +1394,7 @@ check_performance_baseline() {
     return 0
 }
 
+# Function to verify backup
 verify_backup() {
     local backup_dir="$1"
     print_message "Verifying backup integrity..." "$YELLOW"
